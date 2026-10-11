@@ -1,3 +1,0 @@
-{"op":"cli","act":"tls-check","tgt":"example.com:8443","ts":"2026-10-12T04:32:11.855221533+06:00","res":"ok"}
-{"op":"cli","act":"tls-check","tgt":"example.com:8443","ts":"2026-10-12T04:32:26.31505698+06:00","res":"ok"}
-{"op":"cli","act":"tls-check","tgt":"example.com:8443","ts":"2026-10-12T04:32:32.934031284+06:00","res":"ok"}
