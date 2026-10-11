@@ -86,7 +86,11 @@ gofmt -l ./...
 ## Known state
 
 - `docs/`, `testdata/`, `web/` are empty stubs; `bin/` holds a scratch build
-  of `nettools-test`. `internal/core/report/` has no Go files yet.
+  of `nettools-test`. `internal/core/report/` now renders the structured
+  text report (FR-R4/R5) with tests.
+- Unit tests exist for `target`, `finding`, `audit`, `dnscheck`, `tlscheck`
+  (hand-built x509 fixtures), and `report`; run with `go test ./...`.
+  `engine`, `internal/core/dns`, and `cmd/nettools` are not yet covered.
 - This project has no git history committed yet.
 - The milestone/approval record in `project-plan.md` is **not** a substitute
   for an explicit operator approval before any non-headless feature is

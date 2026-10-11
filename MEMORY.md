@@ -57,16 +57,33 @@ clean; multi-arch build OK; live CLI run for `example.com` and
 
 ## Next step (what I'd do next if asked)
 
-1. TLS fixtures per the earlier list (expired, self-signed, hostname
-   mismatch, weak protocol) compared against `openssl s_client`.
-2. Unit tests for `engine.Run` happy/sad paths and `finding` JSON
-   round-trip via `printReport`/report package (FR-R1).
-3. `internal/core/report/` is still empty; text report describes the M1
-   milestone deliverable that's still missing.
-4. Consider `tlscheck` unit tests using a local TLS server fixture with a
-   hand-built self-signed cert (no network).
-5. Consider adding `cmd/nettools` unit tests for `runHeadless` arg
-   routing now that logic is behind flag.FlagSet.
+1. Wire `report.WriteText` into `runHeadless` (replaces ad-hoc
+   `printReport`) — that completes the M1-ish CLI: findings → structured
+   text report. Then compare against `openssl s_client`.
+2. TLS **server** fixtures need a trust seam: `dialTLS` hard-codes the
+   system pool; add optional `Context.RootCAs *x509.CertPool` so
+   in-process servers with self-signed test CAs can be exercised
+   end-to-end (expiry/self-signed/weak paths).
+3. `engine.Run` currently ignores `TLSContext` entirely — tunnel
+   `tlscheck.Run` into the flow and test both paths.
+4. `cmd/nettools` tests for `runHeadless` arg routing.
+
+### Session 2 additions (record now)
+
+- **tlscheck tests** (`tls_test.go`): hand-built certs (RSA-2048,
+  self-signed) test `hostnameFinding` (FR-C5 Critical on mismatch, Info
+  on match, Critical on nil leaf), `daysRemaining` (+30d ≈ 30; past < 0;
+  zero == 0), `isUnreachable` (refused/no-such-host/timeout → true;
+  trust errors → false; real `net.Error` timeout → true), severity name
+  stability. Server-level tests deferred until RootCAs seam exists.
+- **report package** (`report.go`): `WriteText` produces all five FR-R4
+  sections in fixed order; metadata (tool/operator/started/targets,
+  FR-R5); findings sorted severity-desc and grouped; remediation lines
+  deduped per kind (FR-R6); ToolName required. Tests in `report_test.go`
+  cover all sections, ordering, empty run, metadata, dedup, required
+  fields.
+- Fixtures helper `mustCert(t, host, notBefore, notAfter)` lives in
+  `tls_test.go` — reuse for future chain fixtures.
 
 ## Conventions
 

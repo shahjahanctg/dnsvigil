@@ -47,14 +47,28 @@
 - FR-A1/A3/A4: JSONL entry shape, always-log-failures still needs a test
   for the failure path (parse-error entry) — next step.
 
+## Task sequence additions (this session, part 2)
+
+6. **TLS tests** — `internal/core/tlscheck/tls_test.go`: hand-built x509
+   certificates prove FR-C5 (hostname mismatch → Critical), expiry math,
+   unreachable-vs-trust error classification, stable severity names.
+   In-process TLS *server* fixtures are deferred until `dialTLS` gains a
+   trust-injection seam (RootCAs); listed below.
+7. **Report package** — new `internal/core/report/`: FR-R4 structured text
+   report (summary → scope → findings by severity → remediation →
+   methodology), FR-R5 metadata, FR-R6 per-kind remediation guidance;
+   7 tests. Not yet wired into the CLI (next step for M1).
+
 ## Remaining work (next session)
 
-1. TLS fixtures per MEMORY.md (expired, self-signed, hostname mismatch,
-   weak protocol) compared with `openssl s_client`.
-2. `engine.Run` + `finding` JSON round-trip + `audit` failure-path tests.
-3. `internal/core/report/` text report (M1 deliverable still missing).
-4. `tlscheck` tests via an in-process TLS server with a hand-built
-   self-signed cert.
+1. Wire `report.WriteText` into `cmd/nettools` runHeadless (M1 gate), then
+   compare output against `openssl s_client` on fixed hosts.
+2. Full certificate checks in engine: chain/issuer/validity/expiry →
+   report + audit entry (M1 deliverable).
+3. In-process TLS **server** fixtures: add a RootCAs/trust seam to dialTLS,
+   then test expired/self-signed/weak-cert paths end to end.
+4. `engine.Run` + `dns` package + `cmd/nettools` tests; audit failure-path
+   (parse-error) test.
 
 ## Files owned
 
