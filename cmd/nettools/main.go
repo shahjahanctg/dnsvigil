@@ -5,8 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 	"time"
+
+	"github.com/soc-tool/internal/core/report"
 
 	"github.com/soc-tool/internal/core/audit"
 	"github.com/soc-tool/internal/core/dnscheck"
@@ -119,13 +120,20 @@ func runHeadless(args []string) {
 
 		res := engine.Run(ctx, tgt)
 
-		sorted := make([]finding.Finding, len(res.Findings))
-		copy(sorted, res.Findings)
-		sort.Slice(sorted, func(i, j int) bool {
-			return sorted[i].Severity < sorted[j].Severity
-		})
+		// Render through the shared report package (FR-S1/S2 parity, FR-R4).
+		if err := report.WriteText(os.Stdout, report.Input{
+			Meta: report.Metadata{
+				Operator: "cli",
+				When:     time.Now(),
+				ToolName: "nettools",
+				Version:  "0.1.0-dev",
+				Targets:  []string{tgt.Addr()},
+			},
+			Findings: res.Findings,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "report: %v\n", err)
+		}
 
-		printReport(sorted, &res)
 		log.Append(audit.Entry{Operator: "cli", Action: "tls-check", Target: tgt.Addr(), When: time.Now(), Result: "ok"})
 	}
 

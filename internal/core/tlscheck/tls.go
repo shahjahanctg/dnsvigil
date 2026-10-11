@@ -1,3 +1,5 @@
+// Package tlscheck verifies certificates presented by operator-supplied
+// targets (FR-C3–C7, FR-C13–C19).
 package tlscheck
 
 import (
@@ -9,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miekg/dns"
 	"github.com/soc-tool/internal/core/finding"
 	"github.com/soc-tool/internal/core/target"
 )
@@ -19,6 +20,10 @@ type Context struct {
 	Logger         func(...any)
 	CustomResolver string
 	Proxy          string
+	// RootCAs is an optional trust anchor used by tests so in-process TLS
+	// servers (with self-signed or lab CAs) can be checked. When nil the
+	// system's default pool is used.
+	RootCAs *x509.CertPool
 }
 
 // Run checks a single target's TLS certificate and returns findings.
@@ -69,8 +74,7 @@ func Run(ctx Context, t target.Target) ([]finding.Finding, error) {
 			"the certificate is valid from %s until %s",
 			leaf.NotBefore.Format("2006-01-02"),
 			leaf.NotAfter.Format("2006-01-02")),
-		Detail: fmt.Sprintf(
-			"not_before=%s\nnot_after=%s\ndays_remaining=%d",
+		Detail: fmt.Sprintf("not_before=%s\nnot_after=%s\ndays_remaining=%d",
 			leaf.NotBefore.Format(time.RFC3339),
 			leaf.NotAfter.Format(time.RFC3339),
 			daysRemaining(leaf.NotAfter)),
@@ -96,7 +100,7 @@ func Run(ctx Context, t target.Target) ([]finding.Finding, error) {
 				remaining),
 			Detail: fmt.Sprintf("expires %s\ndays_remaining=%d", leaf.NotAfter.Format(time.RFC3339), remaining),
 		})
-	} else if remaining > 365 && remaining > 398 {
+	} else if remaining > 398 {
 		f = append(f, finding.Finding{
 			Kind:     "tls-validity-length",
 			Severity: finding.SeverityMedium,
@@ -146,6 +150,9 @@ func dialTLS(ctx Context, t target.Target) (*tls.Conn, error) {
 		MinVersion: tls.VersionTLS12,
 		ServerName: t.Host,
 	}
+	if ctx.RootCAs != nil {
+		config.RootCAs = ctx.RootCAs
+	}
 	var dial net.Dialer
 	conn, err := tls.DialWithDialer(&dial, t.Addr(), t.Host, config)
 	if err != nil {
@@ -178,10 +185,8 @@ func hostnameFinding(leaf *x509.Certificate, host string) finding.Finding {
 			break
 		}
 	}
-	if !matched {
-		if strings.EqualFold(leaf.Subject.CommonName, host) {
-			matched = true
-		}
+	if !matched && strings.EqualFold(leaf.Subject.CommonName, host) {
+		matched = true
 	}
 	if matched {
 		return finding.Finding{
@@ -196,8 +201,7 @@ func hostnameFinding(leaf *x509.Certificate, host string) finding.Finding {
 		Severity: finding.SeverityCritical,
 		What:     "hostname mismatch",
 		Because:  fmt.Sprintf("the certificate does not cover %q", host),
-		Detail: fmt.Sprintf("dns_names=%v\ncn=%q",
-			leaf.DNSNames, leaf.Subject.CommonName),
+		Detail:   fmt.Sprintf("dns_names=%v\ncn=%q", leaf.DNSNames, leaf.Subject.CommonName),
 	}
 }
 
@@ -212,84 +216,4 @@ func isUnreachable(err error) bool {
 		return true
 	}
 	return false
-}
-
-// DNS helpers that satisfy DNS requirements.
-func LookupA(ctx Context, name string, timeout time.Duration) (net.IP, error) {
-	rrs, err := resolve(ctx, name, dns.TypeA, timeout)
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range rrs {
-		if a, ok := r.(*dns.A); ok {
-			return a.A, nil
-		}
-	}
-	return nil, fmt.Errorf("no A record for %s", name)
-}
-
-func LookupAAAA(ctx Context, name string, timeout time.Duration) ([]net.IP, error) {
-	rrs, err := resolve(ctx, name, dns.TypeAAAA, timeout)
-	if err != nil {
-		return nil, err
-	}
-	var ips []net.IP
-	for _, r := range rrs {
-		if aaaa, ok := r.(*dns.AAAA); ok {
-			ips = append(ips, aaaa.AAAA)
-		}
-	}
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("no AAAA record for %s", name)
-	}
-	return ips, nil
-}
-
-func LookupMX(ctx Context, name string, timeout time.Duration) (dns.MX, error) {
-	rrs, err := resolve(ctx, name, dns.TypeMX, timeout)
-	if err != nil {
-		return dns.MX{}, err
-	}
-	for _, r := range rrs {
-		if mx, ok := r.(*dns.MX); ok && len(mx.Mx) > 0 {
-			return *mx, nil
-		}
-	}
-	return dns.MX{}, fmt.Errorf("no MX record for %s", name)
-}
-
-func resolve(ctx Context, name string, qtype uint16, timeout time.Duration) ([]dns.RR, error) {
-	return dnsLookup(ctx, name, qtype, timeout)
-}
-
-func dnsLookup(ctx Context, name string, qtype uint16, timeout time.Duration) ([]dns.RR, error) {
-	c := new(dns.Client)
-	c.Timeout = timeout
-
-	var resolvers []string
-	if ctx.CustomResolver != "" {
-		resolvers = []string{ctx.CustomResolver}
-	} else {
-		resolvers = []string{"1.1.1.1:53", "8.8.8.8:53"}
-	}
-
-	msg := new(dns.Msg)
-	msg.SetQuestion(dns.Fqdn(name), qtype)
-
-	var lastErr error
-	for _, r := range resolvers {
-		in, _, err := c.Exchange(msg, r)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		var ans []dns.RR
-		for _, rr := range in.Answer {
-			if rr != nil {
-				ans = append(ans, rr)
-			}
-		}
-		return ans, nil
-	}
-	return nil, fmt.Errorf("dns lookup failed: %w", lastErr)
 }
