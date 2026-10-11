@@ -3,65 +3,76 @@
 > Working memory for the current task sequence only. Read before starting
 > similar work; do not carry unrelated facts across tasks.
 
-## Current task sequence
+## Current task sequence — Session 2026-10-11 (later)
 
-1. Restore build pipeline.
-   - **Problem:** `go test ./...` failed; `go vet` reported a dead package
-     `github.com/soc-tool/internal/core/dns` while the tree also contained
-     `internal/core/dnscheck/dns.go`. The imported `dns` package had been left
-     with a broken, incomplete implementation.
-   - **Repair:** implemented `internal/core/dns/resolver.go` as the shared Go
-     DNS client (`dns.Lookup`, `LookupA/MX/TXT/NS/SOA/CAA/SRV/PTR/CNAME`).
-   - **Decision:** `dnscheck` keeps its own `Context + Run` so the engine's
-     `engine.Context` struct is not changed. Duplication is intentional, not
-     a defect.
-   - **Verification:** `go test ./cmd/... ./internal/...` clean;
-     `CGO_ENABLED=0 go vet ./...` clean; rebuilds succeed.
+**Task: add the first unit tests (the file-ownership and verification gap).**
 
-2. Fix CLI flag handling.
-   - **Problem:** `cmd/nettools/main.go` miswired the headless branch, so
-     `--headless` with targets never entered the headless run.
-   - **Repair:** single flat `flag.FlagSet` for `nettools`; `--headless`
-     routes to `runHeadless(fs.Args())`.
-   - **Verification:** `--help` correct; `--headless` no args → exit 2 with
-     usage; `--headless google.com` → findings + exit 0.
+### Performed
 
-3. Rebuild multi-arch binaries.
-   - **Performed:** `CGO_ENABLED=0` builds: `nettools-linux-amd64`,
-     `nettools-linux-arm64`, `nettools-linux-wsl` (wasm-derived), plus the
-     existing `nettools-windows-amd64.exe`. `nettools-linux-amd64` run with
-     `--version`, `--help`, and a real headless scan.
-   - **Verification:** binary file types and run output captured; `gofmt`
-     clean afterwards.
+1. **Installed Go 1.25.0** at `$HOME/sdk/go1.25.0` (host had no `go`).
+   Use: `export PATH="$HOME/sdk/go1.25.0/bin:$PATH"`.
+2. **New test files** (all offline, no external services):
+   - `internal/core/target/target_test.go` — ParseTarget forms
+     (bare/`host:port`/IPv4/empty/non-numeric port), Addr, SortTargets
+     ordering, ParseSingle ≡ ParseTarget.
+   - `internal/core/finding/findings_test.go` — severity constructors,
+     ascending order, Name() incl. UNKNOWN, FR-S7 field presence.
+   - `internal/core/audit/audit_test.go` — new files default to
+     `audit.jsonl` when path is empty; single write = one line of JSONL;
+     concurrency safety (20 goroutines → 20 lines); Rotate prunes by
+     entry timestamp and is a no-op when disabled.
+   - `internal/core/dnscheck/dns_test.go` — in-process UDP DNS fixture
+     server (`newDNSFixture`); verifies FR-D12 custom-resolver behavior,
+     record values A/AAAA/CAA, missing-record severities (A/CAA medium,
+     AAAA info), direct LookupA/AAAA/CAA.
+3. **Fixed bugs found by the new tests** (fixed the cause, did not weaken
+   assertions):
+   - `internal/core/target/target.go`: ParseTarget silently discarded
+     explicit ports (`trimPort` removed the port before split could see
+     it) — FR-C2 `host:port` was never honored. Removed trimPort entirely;
+     splitHostPort now does the parsing. Added empty-input error,
+     port 1–65535 range check, non-numeric port error.
+   - `internal/core/dnscheck/dns.go`: `ctx.CustomResolver` was ignored —
+     resolvers were hard-coded. Added `Context.resolverList()` honoring
+     FR-D12; all three lookup helpers now route through it.
+4. **Rebuilt** `build/nettools-linux-amd64`, `-arm64`,
+   `nettools-windows-amd64.exe` with `CGO_ENABLED=0` (arm64 not runnable
+   on this host; only compile-verified).
+
+### Verification
+
+`go test ./... -count=1` → all pass; `go vet ./...` clean; `gofmt -l .`
+clean; multi-arch build OK; live CLI run for `example.com` and
+`example.com:8443` returned findings for both targets.
 
 ## Decisions (record now, not later)
 
-- **No git history.** The repo has one commit (`b215f0f SOC Tool`) and no
-  `.git` changes — treat the working tree as the current state; do not invent
-  diffs or commits.
-- **No tests yet.** `testdata/`, `web/`, `docs/`, and
-  `internal/core/report/` are empty. "Verification passed" means compile +
-  vet + gofmt + multi-arch build + binary run, not unit tests.
-- **Dnscheck stays self-contained.** Do not refactor it into `dns/` in this
-  cycle; the engine struct is load-bearing and must not change.
-- **No git tooling.** No `git add/commit/status` performed — no `.git`
-  present.
+- **Go toolchain location** — installed to `$HOME/sdk/go1.25.0`, not the
+  default `~/go`, to avoid a GOPATH/GOROOT collision warning.
+- **`dnscheck` stays self-contained** — only the resolver-list helper was
+  added; engine.Context struct is untouched.
+- **JSONL convention** — one entry per line, encoder-supplied trailing
+  newline; tests assert line counts via `strings.TrimSuffix`+Split.
+- **No lint config** — verification means `go test`, `go vet`, `gofmt`.
 
 ## Next step (what I'd do next if asked)
 
-1. Re-run the resolved build/vet/gofmt chain from a clean cache.
-2. Add targeted unit tests for: `target.ParseTarget`, severity ordering,
-   `audit` JSONL append, and `dnscheck` record lookups against a local DNS
-   fixture.
-3. Add fixture endpoints for Tier 1 TLS behaviours (expired, self-signed,
-   hostname mismatch, weak protocol) and compare with `openssl s_client`.
-4. Rebuild `build/nettools-linux-amd64`, verify headless output including
-   parsed `--headless example.com:8443` and multi-target runs.
+1. TLS fixtures per the earlier list (expired, self-signed, hostname
+   mismatch, weak protocol) compared against `openssl s_client`.
+2. Unit tests for `engine.Run` happy/sad paths and `finding` JSON
+   round-trip via `printReport`/report package (FR-R1).
+3. `internal/core/report/` is still empty; text report describes the M1
+   milestone deliverable that's still missing.
+4. Consider `tlscheck` unit tests using a local TLS server fixture with a
+   hand-built self-signed cert (no network).
+5. Consider adding `cmd/nettools` unit tests for `runHeadless` arg
+   routing now that logic is behind flag.FlagSet.
 
 ## Conventions
 
 - Single flat flagset; headless runs through `runHeadless(fs.Args())`.
 - No CGO in `internal/core/`.
-- One results model (`finding.Finding`); TUI and web UI consume it, never a
-  different shape.
+- One results model (`finding.Finding`); TUI and web UI consume it.
 - Audit log: JSONL, `op`, `act`, `tgt`, `ts`, `res` (+optional `findings`).
+- Custom resolver is honored only through `Context.resolverList()` /
+  shared `dns.Context`; no hard-coded IPs elsewhere.

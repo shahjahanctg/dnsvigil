@@ -99,7 +99,7 @@ func LookupA(ctx Context, name string, timeout time.Duration) (net.IP, error) {
 	msg := new(dns.Msg)
 	msg.SetQuestion(dns.Fqdn(name), dns.TypeA)
 
-	resolvers := []string{"1.1.1.1:53", "8.8.8.8:53"}
+	resolvers := ctx.resolverList()
 	for _, r := range resolvers {
 		in, _, err := c.Exchange(msg, r)
 		if err != nil {
@@ -120,7 +120,7 @@ func LookupAAAA(ctx Context, name string, timeout time.Duration) ([]net.IP, erro
 	msg := new(dns.Msg)
 	msg.SetQuestion(dns.Fqdn(name), dns.TypeAAAA)
 
-	resolvers := []string{"1.1.1.1:53", "8.8.8.8:53"}
+	resolvers := ctx.resolverList()
 	for _, r := range resolvers {
 		in, _, err := c.Exchange(msg, r)
 		if err != nil {
@@ -145,7 +145,7 @@ func LookupCAA(ctx Context, name string, timeout time.Duration) ([]dns.CAA, erro
 	msg := new(dns.Msg)
 	msg.SetQuestion(dns.Fqdn(name), dns.TypeCAA)
 
-	resolvers := []string{"1.1.1.1:53", "8.8.8.8:53"}
+	resolvers := ctx.resolverList()
 	for _, r := range resolvers {
 		in, _, err := c.Exchange(msg, r)
 		if err != nil {
@@ -162,4 +162,12 @@ func LookupCAA(ctx Context, name string, timeout time.Duration) ([]dns.CAA, erro
 		}
 	}
 	return nil, fmt.Errorf("no CAA record for %s", name)
+}
+
+// resolverList returns the resolvers to use, honoring ctx.CustomResolver (FR-D12).
+func (ctx Context) resolverList() []string {
+	if ctx.CustomResolver != "" {
+		return []string{ctx.CustomResolver}
+	}
+	return []string{"1.1.1.1:53", "8.8.8.8:53"}
 }

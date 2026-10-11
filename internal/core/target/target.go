@@ -42,7 +42,9 @@ func (t Target) Validate() error {
 //	example.com:443
 //	93.184.216.34:443
 func ParseTarget(raw string) (Target, error) {
-	raw = trimPort(raw)
+	if raw == "" {
+		return Target{}, fmt.Errorf("cannot parse target: empty input")
+	}
 	parts := splitHostPort(raw)
 	if len(parts) == 1 {
 		return Target{
@@ -57,21 +59,13 @@ func ParseTarget(raw string) (Target, error) {
 	if err != nil {
 		return Target{}, fmt.Errorf("bad port in %q: %w", raw, err)
 	}
+	if port < 1 || port > 65535 {
+		return Target{}, fmt.Errorf("port %d out of range in %q", port, raw)
+	}
 	return Target{
 		Host: parts[0],
 		Port: port,
 	}, nil
-}
-
-func trimPort(raw string) string {
-	// Minimal: strips a trailing :port only when it's numeric.
-	if idx := lastIndexByte(raw, ':'); idx >= 0 {
-		possible := raw[idx+1:]
-		if i, err := strconv.Atoi(possible); err == nil && i > 0 && i <= 65535 {
-			return raw[:idx]
-		}
-	}
-	return raw
 }
 
 func splitHostPort(raw string) []string {
