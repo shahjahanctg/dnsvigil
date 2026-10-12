@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"github.com/soc-tool/internal/core/dnscheck"
 	"github.com/soc-tool/internal/core/engine"
 	"github.com/soc-tool/internal/core/finding"
+	"github.com/soc-tool/internal/core/report"
 	"github.com/soc-tool/internal/core/target"
 	"github.com/soc-tool/internal/core/tlscheck"
 )
@@ -41,6 +41,13 @@ func main() {
 	os.Exit(1)
 }
 
+func parseHeadlessInputs(args []string) ([]string, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("no targets provided; usage: nettools --headless host1 host2 ...")
+	}
+	return args, nil
+}
+
 func severityIdx(s finding.Severity) int {
 	switch s {
 	case finding.SeverityCritical:
@@ -53,42 +60,6 @@ func severityIdx(s finding.Severity) int {
 		return 1
 	default:
 		return 0
-	}
-}
-
-func parseHeadlessInputs(args []string) ([]string, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("no targets provided; usage: nettools --headless host1 host2 ...")
-	}
-	return args, nil
-}
-
-func printReport(findings []finding.Finding, result *engine.Result) {
-	fmt.Println("=== Findings ===")
-	for _, f := range findings {
-		fmt.Printf("  [%s] %s\n", f.Severity.Name(), f.What)
-		if f.Because != "" {
-			fmt.Printf("    because: %s\n", f.Because)
-		}
-		if f.Detail != "" {
-			fmt.Printf("    detail:  %s\n", f.Detail)
-		}
-	}
-	if result != nil {
-		fmt.Printf("---\ntarget: %s\n", result.Target.Addr())
-		if result.Error != nil {
-			fmt.Printf("error: %v\n", result.Error)
-		} else {
-			fmt.Printf("checkedAt: %s\n", time.Now().Format(time.RFC3339))
-		}
-	}
-	if len(findings) > 0 {
-		jsonData, err := json.MarshalIndent(findings, "", "  ")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "json marshal: %v\n", err)
-			return
-		}
-		fmt.Printf("\nJSON:\n%s\n", string(jsonData))
 	}
 }
 
@@ -125,7 +96,20 @@ func runHeadless(args []string) {
 			return sorted[i].Severity < sorted[j].Severity
 		})
 
-		printReport(sorted, &res)
+		if err := report.WriteText(os.Stdout, report.Input{
+			Meta: report.Metadata{
+				Operator: "cli",
+				When:     time.Now(),
+				ToolName: "nettools",
+				Version:  version,
+				Targets:  inputs,
+			},
+			Findings: sorted,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "headless: report: %v\n", err)
+			continue
+		}
+
 		log.Append(audit.Entry{Operator: "cli", Action: "tls-check", Target: tgt.Addr(), When: time.Now(), Result: "ok"})
 	}
 
