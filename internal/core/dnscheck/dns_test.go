@@ -43,8 +43,8 @@ func newDNSFixture(t *testing.T, anchor string) *dnsFixture {
 			})
 		case q.Qtype == dns.TypeMX && q.Name == dns.Fqdn("mail.example.test"):
 			m.Answer = append(m.Answer, &dns.MX{
-				Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: 60},
-				Mx:   "mx1.example.test",
+				Hdr:        dns.RR_Header{Name: q.Name, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: 60},
+				Mx:         "mx1.example.test",
 				Preference: 10,
 			})
 		case q.Qtype == dns.TypeSRV && q.Name == dns.Fqdn("_xmpp._tcp.example.test"):
