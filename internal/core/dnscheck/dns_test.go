@@ -41,6 +41,46 @@ func newDNSFixture(t *testing.T, anchor string) *dnsFixture {
 				Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 60},
 				AAAA: net.IPv6loopback,
 			})
+		case q.Qtype == dns.TypeMX && q.Name == dns.Fqdn("mail.example.test"):
+			m.Answer = append(m.Answer, &dns.MX{
+				Hdr:        dns.RR_Header{Name: q.Name, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: 60},
+				Mx:         "mx1.example.test",
+				Preference: 10,
+			})
+		case q.Qtype == dns.TypeSRV && q.Name == dns.Fqdn("_xmpp._tcp.example.test"):
+			m.Answer = append(m.Answer, &dns.SRV{
+				Hdr:      dns.RR_Header{Name: q.Name, Rrtype: dns.TypeSRV, Class: dns.ClassINET, Ttl: 60},
+				Target:   "xmpp.example.test",
+				Port:     5222,
+				Priority: 0,
+				Weight:   0,
+			})
+		case q.Qtype == dns.TypeTXT && q.Name == dns.Fqdn("log.example.test"):
+			m.Answer = append(m.Answer, &dns.TXT{
+				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 60},
+				Txt: []string{"v=spf1 include:_spf.example.test ~all"},
+			})
+		case q.Qtype == dns.TypeNS && q.Name == dns.Fqdn("ns.example.test"):
+			m.Answer = append(m.Answer, &dns.NS{
+				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 60},
+				Ns:  "ns1.example.test",
+			})
+		case q.Qtype == dns.TypeSOA && q.Name == dns.Fqdn("example.test"):
+			m.Answer = append(m.Answer, &dns.SOA{
+				Hdr:     dns.RR_Header{Name: q.Name, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 60},
+				Ns:      "ns1.example.test",
+				Mbox:    "hostmaster.example.test",
+				Serial:  2026010101,
+				Refresh: 3600,
+				Retry:   600,
+				Expire:  604800,
+				Minttl:  3600,
+			})
+		case q.Qtype == dns.TypePTR && q.Name == dns.Fqdn("1.0.0.127.in-addr.arpa"):
+			m.Answer = append(m.Answer, &dns.PTR{
+				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: 60},
+				Ptr: "localhost",
+			})
 		case q.Qtype == dns.TypeCAA && q.Name == dns.Fqdn("example.test"):
 			m.Answer = append(m.Answer, &dns.CAA{
 				Hdr:   dns.RR_Header{Name: q.Name, Rrtype: dns.TypeCAA, Class: dns.ClassINET, Ttl: 60},
