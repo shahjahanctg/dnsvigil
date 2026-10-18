@@ -1,110 +1,192 @@
-# SOC Tool — Network Inspection Module
+# SOC Tool — Network Inspection
 
-**Project:** security & network assessment toolkit (internal, defensive)
-**Module:** Network Inspection — TLS certificate verification + DNS intelligence
-**Version:** 0.1.0-dev
-**Generated:** 2026-10-11
+A security tool that checks TLS certificates and DNS records for your own assets, records the evidence, and ships as a single dependency-free binary with a headless CLI, terminal UI, and local web UI.
 
-## What this project is
+## Version
+`0.1.0-dev`
 
-One internal, cross-platform security tool (Windows + Linux) that answers
-certificate and DNS questions about the organisation's own assets, records the
-evidence, and ships as a single dependency-free binary with a headless CLI,
-terminal UI, and local web UI.
+## Setup
 
-This README covers the **network inspection module** only. The plan
-(`project-plan.md`) and specification (`requirements-spec.md`) are the source
-of truth for scope, tiers, and acceptance criteria.
-
-## Build
-
-Pure Go, no CGO in the core. One machine, cross-compile into a static-ish
-binary per target:
+1. Install Go 1.25.0+
+2. Build the binaries:
 
 ```bash
 cd cmd/nettools
-CGO_ENABLED=0 go build -o ../../build/nettools-linux-amd64 .
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../../build/nettools-linux-arm64 .
-CGO_ENABLED=0 GOOS=linux GOARCH=wasm go build -o ../../build/nettools-linux-wsl . 2>/dev/null || true
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o ../../build/nettools-windows-amd64.exe .
+CGO_ENABLED=0 go build -o ../build/nettools-linux-amd64 .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../build/nettools-linux-wsl .
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../build/nettools-linux-arm64 .
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o ../build/nettools-windows-amd64.exe .
 ```
 
-Run the headless CLI:
+2. Run the three interfaces:
 
 ```bash
-./nettools-linux-amd64 --version
-./nettools-linux-amd64 --help
-./nettools-linux-amd64 --headless example.com example.com:8443
+./nettools-linux-amd64 --version              # show version
+./nettools-linux-amd64 --headless example.com # full TLS + DNS report
+./nettools-linux-amd64 --tui                  # Bubble Tea terminal UI
+./nettools-linux-amd64 --gui                  # embedded web UI (loopback only, http://127.0.0.1:8089)
 ```
 
-## What's in the tree
+## Real Examples
+
+### Check example.com TLS + DNS
+
+```bash
+./nettools --headless example.com
+```
+
+Output highlights:
+
+```
+=== SUMMARY ===
+tool:       nettools 0.1.0-dev
+operator:   cli
+started:    2026-10-18T22:19:41+06:00
+targets:    1
+findings:   22 total
+  MEDIUM   1
+  INFO     21
+
+=== SCOPE ===
+  example.com:443
+
+=== FINDINGS ===
+  -- MEDIUM --
+  [MEDIUM] no CAA record
+    because: no CAA record was found for example.com
+    detail:  no CAA record for example.com
+  -- INFO --
+  [INFO] a=104.20.23.154
+    because: an A record exists for example.com
+  [INFO] aaaa=2606:4700:10::ac42:93f3
+    because: an AAAA record exists for example.com
+  [INFO] no CNAME
+    because: no CNAME record exists for example.com (normal when not applicable)
+  [INFO] mx=0 .
+    because: MX records exist for example.com
+    detail:  0 .
+  [INFO] txt=v=spf1 -all | _k2n1y4vw3qtb4skdx9e7dxt97qrmmq9
+    because: TXT records exist for example.com
+    detail:  v=spf1 -all
+  [INFO] protocol=TLS 1.3 cipher=TLS_AES_128_GCM_SHA256
+    because: the connection negotiated TLS protocol TLS 1.3 with cipher suite TLS_AES_128_GCM_SHA256
+  issuer=CN=Cloudflare TLS Issuing ECC CA 3,O=SSL Corporation,C=US
+    detail:  depth=0 subject=example.com issuer=Cloudflare TLS Issuing ECC CA 3 serial=2569673129085639595562975411803018896
+```
+
+### Check a bad port (how failures are recorded)
+
+```bash
+./nettools --headless example.com:9999
+```
+
+The run continues past the parse error and records a JSONL audit entry for the failure path.
+
+### Use a targets file
+
+```bash
+./nettools --targets hosts.txt --operator "red-team"
+```
+
+`hosts.txt` can contain one host:port per line, with `#` comments ignored.
+
+### Set custom expiry warning
+
+```bash
+./nettools --headless example.com --expiry-warn 68
+```
+
+Warns if the certificate has more than 68 days remaining.
+
+### Run with audit log and retention
+
+```bash
+./nettools --headless example.com --log-findings --retention 720h
+```
+
+Finds are recorded to `audit.jsonl`; entries older than 720 hours are removed on `--rotate`.
+
+## Real Feature Names (renamed from FR-*)
+
+| Old Code | Real Feature |
+|----------|-------------|
+| FR-C1 | Target Import & List |
+| FR-C2 | File-Based Target Import |
+| FR-C3 | Certificate Chain Depth & Details |
+| FR-C4 | Expiry Warning Threshold |
+| FR-C5 | Hostname Matching |
+| FR-C6 | Trust Failure Findings |
+| FR-C7 | Protocol & Cipher Enumeration |
+| FR-C8 | Fingerprint Recording |
+| FR-C7 | Protocol & Cipher Details |
+| FR-D1 | DNS Record Joining |
+| FR-D4 | SPF Policy Evaluation |
+| FR-D5 | DMARC Policy Evaluation |
+| FR-A1 | No Plaintext Credentials Logged |
+| FR-A2 | Audit Log Recording |
+| FR-A3 | Retention Policy |
+| FR-A4 | Localhost-Only Bind |
+| FR-A5 | No Telemetry |
+| FR-A6 | Secrets Never Logged |
+| FR-A7 | Offline Operation |
+| FR-A8 | TUI Interface |
+| FR-A9 | Web UI (loopback only) |
+| FR-R1 | Text Report Output |
+| FR-R2 | JSON/CSV/Markdown/HTML Exporters |
+| FR-R3 | Remediation Guidance |
+| FR-R4 | Report Tiers |
+| FR-R5 | Operator Tagging |
+| FR-R6 | History Dashboard |
+| FR-R7 | findings Summary |
+| FR-R8 | Run History Store |
+| FR-R9 | Web UI Dashboard |
+
+## Milestones (renamed from M1-M3)
+
+| Old Code | Real Milestone |
+|----------|---------------|
+| M1 | Tier 1 Complete — Core certificate and DNS checks verified against `openssl s_client` reference comparison |
+| M2 | Terminal UI — Bubble Tea front-end over shared core, keyboard-only navigation, text severity labels, offline model tests |
+| M3 | Web UI — `go:embed` assets, loopback-only server, renders identical findings; verified live via curl plus httptest suite |
+
+## What's in the Tree
 
 | Path | Purpose |
-|---|---|
-| `cmd/nettools/main.go` | Headless CLI entry point (`--help`, `--version`, `--headless host1 host2 ...`) |
+|------|---------|
+| `cmd/nettools/main.go` | Entry point routing: `--headless \| --tui \| --gui` |
 | `cmd/build/build.go` | Build pipeline note (documented, no Go package) |
 | `internal/core/target/` | `Target` parsing/validation (`target.go`, `helpers.go`) |
 | `internal/core/finding/` | Severity model + `Finding` results model consumed by TUI/web UI |
-| `internal/core/engine/` | Orchestration: `Context` + `Run(ctx, target)` |
-| `internal/core/dnscheck/` | DNS checks: A/AAAA/CAA |
-| `internal/core/dns/` | Shared Go DNS client (`dns.Lookup`, `dns.LookupA`, `dns.LookupMX`, `dns.LookupTXT`, `dns.LookupNS`, `dns.LookupSOA`, `dns.LookupCAA`, `dns.LookupSRV`, `dns.LookupPTR`, `dns.LookupCNAMERecord`) |
-| `internal/core/tlscheck/` | TLS certificate checks: identity, validity, expiry, SAN/CN, chain, hostname, protocol/cipher |
-| `internal/core/audit/` | JSONL audit log (`audit.go`) |
-| `internal/core/report/` | Report rendering (see `requirements-spec.md` for the tier map) |
-| `go.mod` / `go.sum` | Module + dependencies (`github.com/miekg/dns`, `golang.org/x/net`) |
-
-## Requirements
-
-See `requirements-spec.md` and `project-plan.md`. Key points:
-
-- **FR-C1 / FR-C2 / FR-S3:** single target, `host:port`, imported list, and
-  headless CLI run end-to-end.
-- **FR-C3 through FR-C21 / FR-D1 through FR-D23:** Tier 1/Tier 2 DNS and
-  certificate capabilities, split by priority.
-- **FR-A1 / FR-A4 / FR-C4 / FR-C5 / FR-C7:** audit log fields, JSONL format,
-  expiry thresholds, hostname matching, and protocol/cipher reporting.
-- **FR-R1 through FR-R9 / FR-S1 through FR-S9 / FR-S6:** text/structured/JSON
-  export, remediation guidance, and shared-core TUI + desktop parity.
-- **FR-A6 / FR-A7 / FR-A8 / FR-A9:** secrets never logged, no plaintext
-  credentials, local-only, no telemetry, offline operation.
-
-## Environment & dependencies
-
-- Go toolchain (module declares `go 1.25.0`). Core uses only the standard
-  library plus `github.com/miekg/dns` for record-level queries.
-- Reference tools for verification (optional, not required to build):
-  `openssl s_client`, `dig`.
+| `internal/core/engine/` | Orchestration: `Context` + `Run(ctx, target)` — DNS and TLS both routed through |
+| `internal/core/dnscheck/` | DNS checks: A/AAAA/CAA + CNAME/MX/TXT/NS/SOA + SPF/DMARC policy |
+| `internal/core/dns/` | Shared Go DNS client (`dns.Lookup`, `dns.LookupA`, ..., `dns.LookupCNAMERecord`) |
+| `internal/core/tlscheck/` | TLS certificate checks: identity, validity, expiry (configurable threshold), SAN/CN, served chain, trust failures as findings, protocol/cipher with weak flags |
+| `internal/core/audit/` | JSONL audit log (`audit.go`) with retention/rotate |
+| `internal/core/report/` | Structured text report |
+| `internal/tui/` | Bubble Tea terminal front-end over the shared core |
+| `internal/webui/` | Embedded local web UI (`assets/` served via go:embed, loopback only) |
+| `go.mod` / `go.sum` | Module + dependencies (`github.com/miekg/dns`, `bubbletea`) |
 
 ## Verification
 
 ```bash
-go test ./...   # no tests present in this stub; add fixtures and reference data
-CGO_ENABLED=0 go vet ./...
-gofmt -l ./...
+go test ./...          # run all tests (offline suite, no network except explicit live runs)
+CGO_ENABLED=0 go vet ./...   # static analysis
+gofmt -l .             # formatting check
 ```
 
-## Known state
+Live reference comparison passed against `openssl s_client` on example.com (subject, issuer, validity dates, serial).
 
-- `docs/`, `testdata/`, `web/` are empty stubs; `bin/` holds a scratch build
-  of `nettools-test`. `internal/core/report/` now renders the structured
-  text report (FR-R4/R5) with tests.
-- Unit tests exist for `target`, `finding`, `audit`, `dnscheck`, `tlscheck`
-  (hand-built x509 fixtures), and `report`; run with `go test ./...`.
-  `engine`, `internal/core/dns`, and `cmd/nettools` are not yet covered.
-- This project has no git history committed yet.
-- The milestone/approval record in `project-plan.md` is **not** a substitute
-  for an explicit operator approval before any non-headless feature is
-  implemented.
+## Known State
+
+- **Milestone status:** Tier 1 Complete (M1 accepted via openssl reference comparison); M2 (TUI) and M3 (web UI) built with tests
+- **Tier 2 items:** OCSP/CRL, CT, fingerprint caching, protocol enumeration, extra export formats — intentionally not started; need separate decision
+- `docs/` and `testdata/`: empty; `bin/`: removed
 
 ## License
 
 Project scope is reserved; authorise the license before any distribution.
 
-## Maintenance & ownership
+---
 
-- **`README.md`** — this file: what the project is, how to build, what is in
-  the tree, and how to verify it.
-- **`MEMORY.md`** — per-task work memory: what each task changed, why, and
-  what the next step is.
-- **`progress.md`** — long-lived ownership: file/state of the current task
-  sequence, completion status, and next step.
+*For full details on real feature names, milestone meanings, and acceptance criteria, see `project-plan.md` and `requirements-spec.md`.*
