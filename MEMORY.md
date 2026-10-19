@@ -3,6 +3,71 @@
 > Working memory for the current task sequence only. Read before starting
 > similar work; do not carry unrelated facts across tasks.
 
+## Session 2026-10-19 (latest) — skill swap, tier 2/3 completion, runtime bounds
+
+### Skill set changed
+
+- **`god-mode-skill/` deleted** (was tracked; removal committed). Its
+  templates and workflows are superseded by the superpowers skill set.
+- **superpowers installed** from `https://github.com/obra/superpowers` via
+  `npx skills add obra/superpowers --all --yes`, landing in
+  `.agents/skills/` (15 skills). Agent rules moved to `AGENTS.md`.
+- Skill usage is now mandatory here: `brainstorming` before new work,
+  `test-driven-development` for code, `verification-before-completion`
+  before any success claim, `systematic-debugging` for bugs.
+
+### Bugs the verification passes caught (all fixed, never shipped)
+
+- **Unbounded TLS dial (the original user complaint):** `dialTLS` used a bare
+  `net.Dialer` and `tls.DialWithDialer` runs the handshake with no deadline,
+  so a host that drops the TCP connect never returned — a run was still going
+  after 120s and had to be killed. Now `Context.DialTimeout()` (default 5s,
+  from `--timeout`) bounds the connect via the dialer and the handshake via
+  `tls.Dialer.DialContext` with a context deadline; timeouts classify as
+  unreachable. Regression test: `TestDialTLSTimesOutOnSilentServer`.
+- **DNSSEC read without the EDNS0 DO bit:** RRSIG is not a queryable type;
+  requesting type RRSIG returns nothing, so a correctly signed zone (and a
+  correctly absent RRSIG) looked identical. Signatures must be read out of the
+  answer that covers them (`lookupDO`).
+- **Lame delegation false positive:** a non-recursive SOA probe answered by a
+  forwarder/interceptor (ra/ad set) was blamed on a healthy nameserver.
+  `classifyDelegationReply` now separates *authoritative*, *lame*, and
+  *proxied* (reported Low as "not verifiable from this network").
+- **DKIM revocation counted as a key:** `v=DKIM1; p=` is the published
+  withdrawal marker; counting it produced "12 keys" for a domain with none.
+  `dkimPublishedKey` requires non-empty key material.
+- **Chain completeness false alarm:** a cross-signed root was called
+  incomplete; completeness is now decided by building a verification path
+  (`verifyServedChain`) rather than by testing for a self-signed terminal.
+- **Headless flag ordering:** `--headless example.com --expiry-warn 68`
+  treated the flags as extra *targets* (contacting `--expiry-warn:443`) and
+  ignored the threshold. `reorderHeadlessArgs` moves flags ahead of the
+  positionals (FR-S8).
+- **Resolver typos were silent:** `--resolver "not a host"` produced "no A
+  record" for a host that resolves. `normalizeResolver` validates up front and
+  exits 2.
+
+### Facts worth not rediscovering
+
+- **Runtime (NFR-2/3), measured on this host:** responsive host ~1.0s default,
+  ~3.2s `--deep`; unreachable host 7.0s default, 13.8s `--deep`; 3-target
+  batch including an unreachable host 14.4s.
+- **This sandbox intercepts DNS:** UDP/53 to arbitrary addresses (including
+  TEST-NET and a Cloudflare NS IP) is answered by a local recursive resolver,
+  and `_domainkey` names return `v=DKIM1; p=`. Checks must therefore be
+  written so interception shows up as "not verifiable", never as a finding
+  about the target. `crt.sh` returns HTTP 429 here.
+- **Registered kinds** (grep before inventing one): the full list is in the
+  README check catalogue; `dns-dnssec` carries validation state,
+  `tls-chain-incomplete` carries completeness.
+- **Go toolchain path:** `export PATH="$HOME/sdk/go1.25.0/bin:$PATH"`.
+
+### Decision records added
+
+`docs/003-tier2-tier3-completion.md` (opt-in gating, `--deep`, DNSSEC scope,
+interception heuristic, DKIM revocation) and the superpowers design doc under
+`docs/superpowers/specs/`.
+
 ## Current task sequence — Session 2026-10-11 (later)
 
 **Task: add the first unit tests (the file-ownership and verification gap).**
