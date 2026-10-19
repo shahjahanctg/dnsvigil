@@ -18,10 +18,21 @@
 <p>Enter operator-supplied targets, one per line. Blank lines and <code>#</code> comments are ignored.</p>
 <form action="/run" method="POST">
   <textarea name="targets" rows="6" cols="60">{{.Targets}}</textarea><br><br>
+  <fieldset>
+    <legend>Checks (same switches as the CLI flags)</legend>
+    <label><input type="checkbox" name="deep" value="1"{{if .Deep}} checked{{end}}> deep &mdash; SRV, DKIM, TLSA, MTA-STS, TLS-RPT, reverse DNS, TTL, delegation</label><br>
+    <label><input type="checkbox" name="enumerate" value="1"{{if .Enumerate}} checked{{end}}> enumerate &mdash; protocols, ciphers, SNI names</label><br>
+    <label><input type="checkbox" name="check-revocation" value="1"{{if .CheckRevocation}} checked{{end}}> check-revocation &mdash; OCSP and CRL</label><br>
+    <label><input type="checkbox" name="doh" value="1"{{if .UseDoH}} checked{{end}}> doh &mdash; compare DNS-over-HTTPS answers</label><br>
+    <label><input type="checkbox" name="discover" value="1"{{if .DiscoverWordlist}} checked{{end}}> discover &mdash; subdomain wordlist</label><br>
+    <label><input type="checkbox" name="discover-ct" value="1"{{if .DiscoverCT}} checked{{end}}> discover-ct &mdash; Certificate Transparency names</label><br>
+    <label><input type="checkbox" name="axfr" value="1"{{if .ZoneTransfer}} checked{{end}}> axfr &mdash; zone transfer attempt</label>
+  </fieldset>
   <button type="submit">Run audit</button>
 </form>
 
 {{if .Error}}<p>error: {{.Error}}</p>{{end}}
+{{if .UseDoH}}<p>DNS-over-HTTPS comparison was requested for this run.</p>{{end}}
 
 {{if .Findings}}
 <h2>Findings ({{len .Findings}}, most severe first)</h2>

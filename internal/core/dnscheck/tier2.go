@@ -10,38 +10,6 @@ import (
 	"github.com/soc-tool/internal/core/finding"
 )
 
-// dnssecStatusFinding reports DS/DNSKEY/RRSIG presence (FR-D3, RC: these are
-// the same queries dig makes; status only, not validation).
-func dnssecStatusFinding(ctx Context, host string, timeout time.Duration) finding.Finding {
-	var lines []string
-	key, errKey := Lookup(ctx, host, dns.TypeDNSKEY)
-	sig, errSig := Lookup(ctx, host, dns.TypeRRSIG)
-	ds, errDS := Lookup(ctx, host, dns.TypeDS)
-	for _, p := range []struct {
-		name string
-		n    int
-		err  error
-	}{{"dnskey", len(key), errKey}, {"rrsig", len(sig), errSig}, {"ds", len(ds), errDS}} {
-		lines = append(lines, fmt.Sprintf("%s=%d", p.name, p.n))
-	}
-	if len(key) > 0 && errKey == nil {
-		return finding.Finding{
-			Kind:     "dns-dnssec",
-			Severity: finding.SeverityInfo,
-			What:     "dnssec records present",
-			Because:  "DNSKEY records exist at " + host + ", indicating a DNSSEC-signed zone",
-			Detail:   strings.Join(lines, "\n"),
-		}
-	}
-	return finding.Finding{
-		Kind:     "dns-dnssec",
-		Severity: finding.SeverityInfo,
-		What:     "no dnssec records",
-		Because:  "no DNSKEY/RRSIG/DS records exist at " + host + "; the zone is not visibly DNSSEC-signed (DS presence at the parent is checked separately)",
-		Detail:   strings.Join(lines, "\n"),
-	}
-}
-
 // Lookup is a local raw lookup over the shared client behaviour so tier-2
 // checks do not need the legacy duplicate package.
 func Lookup(ctx Context, name string, qtype uint16) ([]dns.RR, error) {

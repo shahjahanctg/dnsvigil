@@ -26,18 +26,23 @@ var version = "0.1.0-dev"
 // headlessOptions bundles one headless run's configuration (FR-C1/C4, FR-D12,
 // FR-A1/A2/A5, FR-R5). It is a plain struct so tests can drive it directly.
 type headlessOptions struct {
-	Operator        string
-	Timeout         time.Duration
-	ExpiryWarnDays  int
-	AuditPath       string
-	Retention       time.Duration
-	LogFindings     bool
-	ExportFormat    string
-	ReportDir       string
-	Resolver        string
-	SecondResolver  string
-	Enumerate       bool
-	CheckRevocation bool
+	Operator         string
+	Timeout          time.Duration
+	ExpiryWarnDays   int
+	AuditPath        string
+	Retention        time.Duration
+	LogFindings      bool
+	ExportFormat     string
+	ReportDir        string
+	Resolver         string
+	SecondResolver   string
+	Enumerate        bool
+	CheckRevocation  bool
+	Deep             bool
+	UseDoH           bool
+	DiscoverWordlist bool
+	DiscoverCT       bool
+	ZoneTransfer     bool
 }
 
 func main() {
@@ -147,6 +152,11 @@ var valuedHeadlessFlags = map[string]bool{
 	"log-findings":     false,
 	"enumerate":        false,
 	"check-revocation": false,
+	"deep":             false,
+	"doh":              false,
+	"discover":         false,
+	"discover-ct":      false,
+	"axfr":             false,
 }
 
 // reorderHeadlessArgs moves flags ahead of the positional target list so the
@@ -193,7 +203,12 @@ func runHeadless(args []string) {
 	fs.StringVar(&opts.ReportDir, "report-dir", ".nettools/reports", "directory for exported reports and run history files (FR-R8)")
 	fs.StringVar(&opts.Resolver, "resolver", "", "custom DNS resolver for every query, e.g. 1.1.1.1:53 (FR-D12)")
 	fs.StringVar(&opts.SecondResolver, "second-resolver", "", "second resolver to compare answers against (FR-D11)")
-	fs.BoolVar(&opts.Enumerate, "enumerate", false, "probe offered protocols and ciphers (FR-C15/C16; more connections per target)")
+	fs.BoolVar(&opts.Enumerate, "enumerate", false, "probe offered protocols and ciphers (FR-C15/C16) and SNI names (FR-C20); more connections per target")
+	fs.BoolVar(&opts.Deep, "deep", false, "run the extra DNS checks: SRV, DKIM, TLSA, MTA-STS, TLS-RPT, reverse DNS, TTL, delegation (FR-D2/D6/D7/D8/D19/D22/D23)")
+	fs.BoolVar(&opts.UseDoH, "doh", false, "also resolve over DNS-over-HTTPS and compare (FR-D13)")
+	fs.BoolVar(&opts.DiscoverWordlist, "discover", false, "probe a built-in subdomain wordlist under each target domain (FR-D14)")
+	fs.BoolVar(&opts.DiscoverCT, "discover-ct", false, "ask Certificate Transparency logs for subdomains (FR-D15)")
+	fs.BoolVar(&opts.ZoneTransfer, "axfr", false, "attempt a zone transfer against each authoritative server (FR-D16)")
 	fs.BoolVar(&opts.CheckRevocation, "check-revocation", false, "verify OCSP revocation status (FR-C10; off by default)")
 	if err := fs.Parse(reorderHeadlessArgs(args)); err != nil {
 		os.Exit(2)
@@ -233,8 +248,13 @@ func runHeadless(args []string) {
 
 		ctx := engine.Context{
 			DNSContext: dnscheck.Context{CustomResolver: resolver,
-				SecondResolver: secondResolver,
-				Timeout:        opts.Timeout,
+				SecondResolver:   secondResolver,
+				Timeout:          opts.Timeout,
+				Deep:             opts.Deep,
+				UseDoH:           opts.UseDoH,
+				DiscoverWordlist: opts.DiscoverWordlist,
+				DiscoverCT:       opts.DiscoverCT,
+				ZoneTransfer:     opts.ZoneTransfer,
 			},
 			TLSContext: tlscheck.Context{
 				ExpiryWarnDays:  opts.ExpiryWarnDays,

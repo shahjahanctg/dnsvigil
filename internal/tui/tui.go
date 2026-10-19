@@ -17,6 +17,20 @@ import (
 	"github.com/soc-tool/internal/core/tlscheck"
 )
 
+// runCheck is the shared-core entry point (FR-S2). Tests replace it so the
+// keyboard acceptance flow runs offline against fixed findings.
+var runCheck = engine.Run
+
+// Options mirrors the check switches the CLI exposes as flags, so the TUI has
+// no exclusive capability (FR-S1/S2). Zero value = the default run.
+type Options struct {
+	Deep             bool
+	UseDoH           bool
+	DiscoverWordlist bool
+	DiscoverCT       bool
+	ZoneTransfer     bool
+}
+
 // Model is the single Bubble Tea state model.
 type Model struct {
 	input    string // current target entry
@@ -24,6 +38,7 @@ type Model struct {
 	selected int // index into results of the detail view
 	quitting bool
 	err      string
+	opts     Options
 }
 
 // runResult is one target's merged result plus its canonical address.
@@ -67,6 +82,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selected++
 			}
 			return m, nil
+		// Check switches use ctrl combinations so a printable letter can still
+		// be typed into the target entry (FR-S4: keyboard only).
+		case "ctrl+d":
+			m.opts.Deep = !m.opts.Deep
+			return m, nil
+		case "ctrl+o":
+			m.opts.UseDoH = !m.opts.UseDoH
+			return m, nil
+		case "ctrl+w":
+			m.opts.DiscoverWordlist = !m.opts.DiscoverWordlist
+			return m, nil
+		case "ctrl+t":
+			m.opts.DiscoverCT = !m.opts.DiscoverCT
+			return m, nil
+		case "ctrl+x":
+			m.opts.ZoneTransfer = !m.opts.ZoneTransfer
+			return m, nil
 		}
 		// Printable characters append to the target entry.
 		m.input += msg.String()
@@ -87,16 +119,42 @@ func (m *Model) runTarget(addr string) {
 		return
 	}
 	m.err = ""
-	res := engine.Run(engine.Context{
-		DNSContext: dnscheck.Context{},
-		TLSContext: tlscheck.Context{},
-	}, t)
+	res := runCheck(m.context(), t)
 	entry := runResult{address: t.Addr(), findings: res.Findings}
 	if res.Error != nil {
 		entry.errText = res.Error.Error()
 	}
 	m.results = append(m.results, entry)
 	m.selected = len(m.results) - 1
+}
+
+// context turns the current switches into a shared-core run context.
+func (m Model) context() engine.Context {
+	return engine.Context{
+		DNSContext: dnscheck.Context{
+			Deep:             m.opts.Deep,
+			UseDoH:           m.opts.UseDoH,
+			DiscoverWordlist: m.opts.DiscoverWordlist,
+			DiscoverCT:       m.opts.DiscoverCT,
+			ZoneTransfer:     m.opts.ZoneTransfer,
+		},
+		TLSContext: tlscheck.Context{Enumerate: m.opts.Deep},
+	}
+}
+
+// optionsLine renders every switch with its state in words, so the interface
+// never relies on colour or position to convey meaning (FR-S5).
+func (m Model) optionsLine() string {
+	onoff := func(on bool) string {
+		if on {
+			return "on"
+		}
+		return "off"
+	}
+	return fmt.Sprintf(
+		"checks: deep(ctrl+d)=%s doh(ctrl+o)=%s wordlist(ctrl+w)=%s ct-log(ctrl+t)=%s axfr(ctrl+x)=%s\n\n",
+		onoff(m.opts.Deep), onoff(m.opts.UseDoH), onoff(m.opts.DiscoverWordlist),
+		onoff(m.opts.DiscoverCT), onoff(m.opts.ZoneTransfer))
 }
 
 // View renders the whole interface with text labels only (FR-S5: no meaning
@@ -107,7 +165,8 @@ func (m Model) View() string {
 	}
 	var b strings.Builder
 	b.WriteString("nettools — certificate + DNS audit\n")
-	b.WriteString("type a target (host or host:port), press enter; q quits\n\n")
+	b.WriteString("type a target (host or host:port), press enter; q quits\n")
+	b.WriteString(m.optionsLine())
 
 	b.WriteString("target: ")
 	b.WriteString(m.input)

@@ -39,6 +39,17 @@ type pageData struct {
 	Error    string
 	Findings []finding.Finding
 	History  []history.Entry
+
+	// Check switches, mirroring the CLI flags so the web interface has no
+	// exclusive capability and a re-render keeps the operator's selection
+	// (FR-S1/S2).
+	Deep             bool
+	Enumerate        bool
+	CheckRevocation  bool
+	UseDoH           bool
+	DiscoverWordlist bool
+	DiscoverCT       bool
+	ZoneTransfer     bool
 }
 
 var pageTmpl = template.Must(template.ParseFS(assets, "assets/index.html"))
@@ -98,6 +109,16 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	checks := checkSwitches{
+		deep:             r.FormValue("deep") != "",
+		enumerate:        r.FormValue("enumerate") != "",
+		checkRevocation:  r.FormValue("check-revocation") != "",
+		useDoH:           r.FormValue("doh") != "",
+		discoverWordlist: r.FormValue("discover") != "",
+		discoverCT:       r.FormValue("discover-ct") != "",
+		zoneTransfer:     r.FormValue("axfr") != "",
+	}
+
 	var findings []finding.Finding
 	runTargets := 0
 	for _, line := range strings.Split(raw, "\n") {
@@ -107,13 +128,22 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		}
 		tgt, err := target.ParseTarget(line)
 		if err != nil {
-			s.render(w, pageData{Title: "nettools", Targets: raw, Error: err.Error()})
+			s.render(w, pageData{Title: "nettools", Targets: raw, Error: err.Error(), Deep: checks.deep, Enumerate: checks.enumerate, CheckRevocation: checks.checkRevocation, UseDoH: checks.useDoH, DiscoverWordlist: checks.discoverWordlist, DiscoverCT: checks.discoverCT, ZoneTransfer: checks.zoneTransfer})
 			return
 		}
 		runTargets++
 		res := engine.Run(engine.Context{
-			DNSContext: dnscheck.Context{},
-			TLSContext: tlscheck.Context{},
+			DNSContext: dnscheck.Context{
+				Deep:             checks.deep,
+				UseDoH:           checks.useDoH,
+				DiscoverWordlist: checks.discoverWordlist,
+				DiscoverCT:       checks.discoverCT,
+				ZoneTransfer:     checks.zoneTransfer,
+			},
+			TLSContext: tlscheck.Context{
+				Enumerate:       checks.enumerate,
+				CheckRevocation: checks.checkRevocation,
+			},
 		}, tgt)
 		findings = append(findings, res.Findings...)
 	}
@@ -123,10 +153,28 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, pageData{
-		Title:    "nettools — results",
-		Targets:  raw,
-		Findings: sortedFindings(findings),
+		Title:            "nettools — results",
+		Targets:          raw,
+		Findings:         sortedFindings(findings),
+		Deep:             checks.deep,
+		Enumerate:        checks.enumerate,
+		CheckRevocation:  checks.checkRevocation,
+		UseDoH:           checks.useDoH,
+		DiscoverWordlist: checks.discoverWordlist,
+		DiscoverCT:       checks.discoverCT,
+		ZoneTransfer:     checks.zoneTransfer,
 	})
+}
+
+// checkSwitches is the set of check toggles a form submission carries.
+type checkSwitches struct {
+	deep             bool
+	enumerate        bool
+	checkRevocation  bool
+	useDoH           bool
+	discoverWordlist bool
+	discoverCT       bool
+	zoneTransfer     bool
 }
 
 // sortedFindings lists findings most severe first, same order as the report.

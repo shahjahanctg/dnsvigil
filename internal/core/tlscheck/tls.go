@@ -110,8 +110,14 @@ func Run(ctx Context, t target.Target) ([]finding.Finding, error) {
 	// Chain validation against the trust store.
 	f = append(f, chainFinding(leaf, t.Host))
 
-	// Served chain enumeration (FR-C3).
+	// Served chain enumeration (FR-C3) and completeness (FR-C17), judged
+	// against the trust store actually in use for this run.
 	f = append(f, servedChainFinding(certs))
+	f = append(f, chainCompletenessFinding(certs, ctx.trustStore()))
+
+	// Signature algorithm, key strength (FR-C13) and DV/OV/EV (FR-C19).
+	f = append(f, signatureStrengthFindings(leaf)...)
+	f = append(f, classificationFinding(certs))
 
 	// Negotiated protocol + cipher (FR-C7).
 	f = append(f, protocolCipherFindings(state)...)
@@ -121,9 +127,31 @@ func Run(ctx Context, t target.Target) ([]finding.Finding, error) {
 	f = append(f, fingerprintFinding(leaf))
 	f = append(f, staplingFindings(state, ctx)...)
 	f = append(f, sctFinding(state))
+
+	// CRL revocation (FR-C10) needs the issuer that signed the leaf.
+	var issuer *x509.Certificate
+	if len(certs) > 1 {
+		issuer = certs[1]
+	}
+	f = append(f, crlFindings(ctx, leaf, issuer)...)
+
 	f = append(f, enumerationFindings(t, ctx.Enumerate)...)
+	f = append(f, sniFindings(t, ctx.Enumerate)...)
 
 	return f, nil
+}
+
+// trustStore returns the certificate pool used to decide whether a served
+// chain terminates at a known anchor (FR-C17).
+func (c Context) trustStore() *x509.CertPool {
+	if c.RootCAs != nil {
+		return c.RootCAs
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		return nil
+	}
+	return pool
 }
 
 // WarnDays resolves the FR-C4 threshold (operator override or default).

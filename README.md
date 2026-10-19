@@ -104,7 +104,53 @@ Every DNS query goes to `--resolver`; setting `--second-resolver` adds a diverge
 ./nettools --headless --enumerate --check-revocation example.com
 ```
 
-`--enumerate` makes more connections per target (one per protocol version and cipher suite) and flags weak ciphers HIGH; `--check-revocation` queries the certificate's OCSP responder.
+`--enumerate` makes more connections per target (one per protocol version and cipher suite, plus an SNI probe) and flags weak ciphers HIGH; `--check-revocation` queries the certificate's OCSP responder and its CRL distribution points.
+
+### Run the deeper DNS checks
+
+```bash
+./nettools --headless --deep example.com
+```
+
+`--deep` adds SRV, DKIM, TLSA, MTA-STS, TLS-RPT, reverse DNS (with forward confirmation), TTL and delegation checks. It multiplies the number of DNS queries, so it is off by default.
+
+### Resolve over DNS-over-HTTPS, discover names, or try a zone transfer
+
+```bash
+./nettools --headless --doh example.com
+./nettools --headless --discover example.com            # built-in subdomain wordlist
+./nettools --headless --discover-ct example.com         # Certificate Transparency names
+./nettools --headless --axfr example.com                # zone transfer attempt
+```
+
+These reach beyond the target's own records (a DoH resolver, a CT log, an AXFR attempt), so they are off by default and only ever ask about the operator-supplied domain (FR-S8).
+
+## Check Catalogue
+
+Every finding carries a severity, a plain-language reason, and technical detail. Checks marked *opt-in* only run when their flag is passed (or their switch is toggled in the TUI/web UI).
+
+| Question the check answers | Flag | Kinds |
+|---|---|---|
+| Is the certificate served, and who issued it? | — | `tls-identity`, `tls-chain`, `tls-chain-served` |
+| Does it cover the requested name, and when does it expire? | `--expiry-warn` | `tls-hostname`, `tls-validity`, `tls-expiry`, `tls-expiry-ok`, `tls-validity-length` |
+| Is the chain complete, ordered, and anchored? | — | `tls-chain-incomplete` |
+| How strong are the signature and key? | — | `tls-signature`, `tls-key` |
+| Is it DV, OV or EV? | — | `tls-classification` |
+| What protocol and cipher were negotiated? | `--enumerate` | `tls-protocol`, `tls-protocol-weak`, `tls-cipher-weak`, `tls-protocols-offered`, `tls-ciphers-accepted` |
+| Does the host present different certificates per SNI name? | `--enumerate` | `tls-sni` |
+| Was a fingerprint recorded, is it stapled, is it revoked, is it in CT? | `--check-revocation` | `tls-fingerprint`, `tls-ocsp-stapling`, `tls-revocation`, `tls-crl`, `tls-ct` |
+| Which DNS records exist? | — | `dns-a`, `dns-aaaa`, `dns-cname`, `dns-mx`, `dns-txt`, `dns-ns`, `dns-soa`, `dns-caa` |
+| Is mail policy sound? | `--deep` | `dns-spf`, `dns-dmarc`, `dns-dkim`, `dns-mta-sts`, `dns-tls-rpt` |
+| Is the zone signed, and does the delegation validate? | — | `dns-dnssec` |
+| Are there alias, wildcard or takeover risks? | — | `dns-cname-chain`, `dns-cname-loop`, `dns-dangling-cname`, `dns-wildcard` |
+| Does reverse DNS confirm forwardly? | `--deep` | `dns-ptr`, `dns-fcrdns` |
+| Is any delegated nameserver broken? | `--deep` | `dns-lame-delegation` |
+| How long may answers be cached? | `--deep` | `dns-ttl` |
+| Is the service pinned in DNS, and where is it? | `--deep` | `dns-tlsa`, `dns-srv` |
+| Do two resolvers agree? | `--second-resolver`, `--doh` | `dns-resolver-divergence`, `dns-doh` |
+| Which names exist beyond the ones typed in? | `--discover`, `--discover-ct` | `dns-subdomain` |
+| Can the whole zone be transferred? | `--axfr` | `dns-zone-transfer` |
+| Did the certificate change since the last run? | — | `tls-cert-change` |
 
 ### Set custom expiry warning
 
@@ -207,9 +253,11 @@ Release binaries embed VCS metadata: `go version -m ./nettools` shows `vcs.revis
 ## Known State
 
 - **Milestone status:** Tier 1 Complete (M1 accepted via openssl reference comparison); M2 (TUI) and M3 (web UI) built with tests
-- **Tier 2 implemented behind explicit flags or extra connections per target:** OCSP stapling always reported; revocation (`--check-revocation`), CT presence, fingerprint recording, protocol/cipher enumeration (`--enumerate`), and JSON/CSV/Markdown/HTML export (`--export`) are available and tested
-- **Tier 2 still not started:** CRL fetching, DV/OV/EV classification, chain-completeness and SNI enumeration, DNSSEC validation, subdomain discovery — need separate decision
-- `docs/` and `testdata/`: empty; `bin/`: removed
+- **Tier 2 and the deferred Tier 3 network checks are implemented**, each with tests: CRL revocation, DV/OV/EV classification, signature and key strength, chain completeness, SNI enumeration, DNSSEC delegation validation, SRV, reverse DNS with forward confirmation, MTA-STS, TLS-RPT, TLSA, DKIM, CNAME chain/loop detection, TTL reporting, lame delegation, DoH comparison, wordlist and CT-log discovery, and AXFR
+- **Default runs stay short (NFR-2):** the multi-query checks sit behind `--deep`, and the checks that reach beyond the target's own records sit behind `--doh`, `--discover`, `--discover-ct`, and `--axfr`
+- **DNSSEC scope:** validation links the parent's DS record to a served DNSKEY and verifies the RRSIG over the DNSKEY set. A full path to the root trust anchor is not built, so a zone is never reported as fully validated — only that its delegation validates one level
+- **Not implemented:** PDF export (FR-R3, Tier 3), a custom wordlist file (the built-in list is used), and choosing the DoH provider (Cloudflare is used)
+- `docs/`: the tier 2/3 decision record; `testdata/`: readable DNS fixtures; `bin/`: removed
 
 ## License
 

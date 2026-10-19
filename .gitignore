@@ -1,0 +1,3 @@
+# Runtime artifacts: run history, exported reports, audit log (FR-R8/A1).
+.nettools/
+audit.jsonl

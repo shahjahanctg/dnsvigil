@@ -420,14 +420,15 @@ func TestTier2WildcardDivergenceDangling(t *testing.T) {
 		t.Errorf("dangling CNAME = %+v", d)
 	}
 
-	// FR-D3: fixture serves DNSKEY for example.test.
-	ds := dnssecStatusFinding(ctx, "example.test", 2*time.Second)
-	if ds.What != "dnssec records present" || ds.Severity != finding.SeverityInfo {
-		t.Errorf("dnssec status = %+v", ds)
+	// FR-D3: the fixture serves DNSKEY but publishes no DS at the parent, so
+	// validation must call the zone insecure rather than validated. The
+	// validated and bogus paths are covered in tier3_test.go.
+	insecure := dnssecValidationFinding(ctx, "example.test", 2*time.Second)
+	if insecure.What != "dnssec insecure" || insecure.Severity != finding.SeverityInfo {
+		t.Errorf("dnssec validation without a DS record = %+v", insecure)
 	}
-	unsigned := dnssecStatusFinding(ctx, "wild.test", 2*time.Second)
-	if unsigned.What != "no dnssec records" {
-		t.Errorf("unsigned zone status = %+v", unsigned)
+	if !strings.Contains(insecure.Detail, "dnskey=") {
+		t.Errorf("dnssec detail should report what was queried: %q", insecure.Detail)
 	}
 }
 

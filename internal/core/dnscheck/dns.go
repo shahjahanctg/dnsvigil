@@ -22,6 +22,19 @@ type Context struct {
 	SecondResolver string
 	Timeout        time.Duration
 	Logger         func(...any)
+	// Deep enables the multi-query checks (FR-D2/D6/D7/D8/D19/D22/D23):
+	// SRV, DKIM, TLSA, MTA-STS, TLS-RPT, reverse DNS, TTL and delegation.
+	// Off by default so a single-host run stays within the NFR-2 time bound.
+	Deep bool
+	// UseDoH resolves the target over DNS-over-HTTPS and compares (FR-D13).
+	UseDoH bool
+	// DiscoverWordlist probes a built-in name list (FR-D14).
+	DiscoverWordlist bool
+	// DiscoverCT asks Certificate Transparency logs for names (FR-D15).
+	DiscoverCT bool
+	// ZoneTransfer attempts an AXFR against each authoritative server
+	// (FR-D16); off by default because it is an intrusive query.
+	ZoneTransfer bool
 }
 
 // Result is the full DNS check result for one target.
@@ -37,7 +50,12 @@ func Run(ctx Context, t target.Target) Result {
 		t.Port = 443
 	}
 
-	timeout := 5 * time.Second
+	// The operator's --timeout governs every query; the default keeps a
+	// single-host run bounded (NFR-2/3).
+	timeout := ctx.Timeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
 	var f []finding.Finding
 
 	// A
@@ -102,9 +120,13 @@ func Run(ctx Context, t target.Target) Result {
 	f = append(f, spfFinding(ctx, t.Host, timeout))
 	f = append(f, dmarcFinding(ctx, t.Host, timeout))
 
-	// Tier 2: DNSSEC status (FR-D3), dangling CNAME (FR-D9), wildcard
-	// (FR-D10), resolver divergence (FR-D11 when a second resolver is set).
-	f = append(f, dnssecStatusFinding(ctx, t.Host, timeout))
+	// Tier 2: DNSSEC validation (FR-D3), CNAME chain/loop (FR-D21),
+	// dangling CNAME (FR-D9), wildcard (FR-D10), resolver divergence
+	// (FR-D11 when a second resolver is set).
+	f = append(f, dnssecValidationFinding(ctx, t.Host, timeout))
+	if d := cnameChainFinding(ctx, t.Host, timeout); d.Kind != "" {
+		f = append(f, d)
+	}
 	if d := danglingCNAMEFinding(ctx, t.Host, timeout); d.Kind != "" {
 		f = append(f, d)
 	}
@@ -112,6 +134,25 @@ func Run(ctx Context, t target.Target) Result {
 	if d := resolverDivergenceFinding(ctx, t.Host, timeout); d.Kind != "" {
 		f = append(f, d)
 	}
+
+	// Tier 2/3 opt-ins: the multi-query checks (FR-D2/D6/D7/D8/D19/D22/D23)
+	// and the network-reaching checks (FR-D13/D14/D15/D16) only run when the
+	// operator asked for them, so a default run stays short.
+	if ctx.Deep {
+		f = append(f, srvFindings(ctx, t.Host, timeout)...)
+		f = append(f, ptrFindings(ctx, t.Host, timeout)...)
+		f = append(f, mtaStsFinding(ctx, t.Host, timeout))
+		f = append(f, tlsRptFinding(ctx, t.Host, timeout))
+		f = append(f, tlsaFindings(ctx, t.Host, t.Port, timeout)...)
+		f = append(f, dkimFinding(ctx, t.Host, timeout))
+		f = append(f, ttlFinding(ctx, t.Host, timeout))
+		if d := lameDelegationFinding(ctx, t.Host, timeout); d.Kind != "" {
+			f = append(f, d)
+		}
+	}
+	f = append(f, dohFinding(ctx, t.Host, timeout)...)
+	f = append(f, discoveryFindings(ctx, t.Host, timeout)...)
+	f = append(f, zoneTransferFindings(ctx, t.Host, timeout)...)
 
 	return Result{Target: t, Findings: f}
 }
