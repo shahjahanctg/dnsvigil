@@ -202,6 +202,8 @@ gofmt -l .             # formatting check
 
 Live reference comparison passed against `openssl s_client` on example.com (subject, issuer, validity dates, serial).
 
+Release binaries embed VCS metadata: `go version -m ./nettools` shows `vcs.revision` and `vcs.modified`. A binary built while the worktree has uncommitted changes reports `vcs.modified=true` — that reflects the build environment, not a local patch, because committing the rebuilt binary is itself a pending change.
+
 ## Known State
 
 - **Milestone status:** Tier 1 Complete (M1 accepted via openssl reference comparison); M2 (TUI) and M3 (web UI) built with tests

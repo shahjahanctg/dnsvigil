@@ -5,6 +5,36 @@ import (
 	"testing"
 )
 
+func TestNormalizeResolver(t *testing.T) {
+	ok := []struct{ in, want string }{
+		{"", ""},
+		{"1.1.1.1", "1.1.1.1:53"},
+		{"1.1.1.1:53", "1.1.1.1:53"},
+		{"8.8.8.8:5353", "8.8.8.8:5353"},
+		{"dns.example.com", "dns.example.com:53"},
+		{" 1.1.1.1 ", "1.1.1.1:53"},
+		{"2606:4700:4700::1111", "[2606:4700:4700::1111]:53"},
+		{"[2606:4700:4700::1111]:53", "[2606:4700:4700::1111]:53"},
+	}
+	for _, tc := range ok {
+		got, err := normalizeResolver(tc.in)
+		if err != nil {
+			t.Errorf("normalizeResolver(%q) returned error %v, want %q", tc.in, err, tc.want)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("normalizeResolver(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	bad := []string{"not a host", "1.1.1.1:abc", ":53", "1.1.1.1:"}
+	for _, in := range bad {
+		if got, err := normalizeResolver(in); err == nil {
+			t.Errorf("normalizeResolver(%q) = %q, want an error", in, got)
+		}
+	}
+}
+
 func TestReorderHeadlessArgsMovesFlagsBeforeTargets(t *testing.T) {
 	cases := []struct {
 		name string

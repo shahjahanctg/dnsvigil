@@ -3,8 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,6 +104,33 @@ func resolveTargetList(args []string, files []string) ([]string, int, error) {
 	return targets, len(files) + len(args), nil
 }
 
+// normalizeResolver validates an operator-supplied resolver and fills in the
+// default DNS port (FR-D12). An empty value means "use the built-in defaults".
+func normalizeResolver(value string) (string, error) {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return "", nil
+	}
+	if strings.ContainsAny(v, " \t") {
+		return "", fmt.Errorf("%q is not a host or host:port", value)
+	}
+	host, port := v, "53"
+	if ip := net.ParseIP(v); ip == nil {
+		if h, p, err := net.SplitHostPort(v); err == nil {
+			host, port = h, p
+		} else if strings.Count(v, ":") == 1 {
+			return "", fmt.Errorf("%q is not a host or host:port", value)
+		}
+	}
+	if host == "" {
+		return "", fmt.Errorf("%q has no host", value)
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return "", fmt.Errorf("port in %q is not a number", value)
+	}
+	return net.JoinHostPort(host, port), nil
+}
+
 // valuedHeadlessFlags are the headless flags that consume the following
 // argument as their value. Everything else in the flag set is boolean.
 var valuedHeadlessFlags = map[string]bool{
@@ -179,6 +208,19 @@ func runHeadless(args []string) {
 		fmt.Fprintf(os.Stderr, "headless: %v\n", err)
 		os.Exit(2)
 	}
+	// A mistyped resolver must fail loudly: silently falling back would turn a
+	// typo into "no A record" findings about a host that is actually fine.
+	resolver, err := normalizeResolver(opts.Resolver)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "headless: invalid --resolver: %v\n", err)
+		os.Exit(2)
+	}
+	secondResolver, err := normalizeResolver(opts.SecondResolver)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "headless: invalid --second-resolver: %v\n", err)
+		os.Exit(2)
+	}
+
 	log := audit.New(opts.AuditPath, opts.Retention, opts.Retention > 0)
 	hist := history.New("") // shared default dir so TUI/dashboard see the same history
 	for _, inp := range targets {
@@ -190,8 +232,8 @@ func runHeadless(args []string) {
 		}
 
 		ctx := engine.Context{
-			DNSContext: dnscheck.Context{CustomResolver: opts.Resolver,
-				SecondResolver: opts.SecondResolver,
+			DNSContext: dnscheck.Context{CustomResolver: resolver,
+				SecondResolver: secondResolver,
 				Timeout:        opts.Timeout,
 			},
 			TLSContext: tlscheck.Context{
