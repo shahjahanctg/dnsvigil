@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
 )
 
 // DefaultExpiryWarnDays is the FR-C4 warning window when the operator does

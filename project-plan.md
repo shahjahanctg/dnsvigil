@@ -41,8 +41,8 @@ Source of truth: `requirements-spec.md` v1.0. In summary:
 ## Architecture or workflow
 
 ```
-soc-tool/
-├─ cmd/nettools/          entry point: --tui | --gui | headless
+dnsvigil/
+├─ cmd/dnsvigil/          entry point: --tui | --gui | headless
 ├─ internal/
 │  ├─ core/               PURE GO — no UI, no CGO
 │  │  ├─ target/          target parsing & loading            (FR-C1, C2)

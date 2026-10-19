@@ -10,15 +10,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/soc-tool/internal/core/audit"
+	"github.com/dnsvigil/dnsvigil/internal/core/audit"
 
-	"github.com/soc-tool/internal/core/dnscheck"
-	"github.com/soc-tool/internal/core/engine"
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/history"
-	"github.com/soc-tool/internal/core/report"
-	"github.com/soc-tool/internal/core/target"
-	"github.com/soc-tool/internal/core/tlscheck"
+	"github.com/dnsvigil/dnsvigil/internal/core/dnscheck"
+	"github.com/dnsvigil/dnsvigil/internal/core/engine"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/history"
+	"github.com/dnsvigil/dnsvigil/internal/core/report"
+	"github.com/dnsvigil/dnsvigil/internal/core/settings"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
+	"github.com/dnsvigil/dnsvigil/internal/core/tlscheck"
 )
 
 var version = "0.1.0-dev"
@@ -31,6 +32,7 @@ type headlessOptions struct {
 	ExpiryWarnDays   int
 	AuditPath        string
 	Retention        time.Duration
+	HistoryRetention time.Duration
 	LogFindings      bool
 	ExportFormat     string
 	ReportDir        string
@@ -55,7 +57,7 @@ func main() {
 	for i, a := range args {
 		switch a {
 		case "-version", "--version":
-			fmt.Printf("nettools version %s\n", version)
+			fmt.Printf("dnsvigil version %s\n", version)
 			os.Exit(0)
 		case "-headless", "--headless":
 			runHeadless(args[i+1:])
@@ -64,11 +66,11 @@ func main() {
 			runTUI()
 			return
 		case "-gui", "--gui":
-			runWebUI()
+			runWebUI(args[i+1:])
 			return
 		}
 	}
-	fmt.Fprintf(os.Stderr, "usage: nettools --headless|--tui|--gui [mode flags] target1 target2 ...\n")
+	fmt.Fprintf(os.Stderr, "usage: dnsvigil --headless|--tui|--gui [mode flags] target1 target2 ...\n")
 	os.Exit(1)
 }
 
@@ -80,7 +82,7 @@ func parseHeadlessInputs(args []string) ([]string, error) {
 		out = append(out, a)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("no targets provided; usage: nettools --headless host1 host2 ...")
+		return nil, fmt.Errorf("no targets provided; usage: dnsvigil --headless host1 host2 ...")
 	}
 	return out, nil
 }
@@ -107,7 +109,7 @@ func resolveTargetList(args []string, files []string) ([]string, int, error) {
 		targets = append(targets, line)
 	}
 	if len(targets) == 0 {
-		return nil, 0, fmt.Errorf("no targets provided; usage: nettools --headless [--targets file] host1 host2 ...")
+		return nil, 0, fmt.Errorf("no targets provided; usage: dnsvigil --headless [--targets file] host1 host2 ...")
 	}
 	return targets, len(files) + len(args), nil
 }
@@ -142,24 +144,25 @@ func normalizeResolver(value string) (string, error) {
 // valuedHeadlessFlags are the headless flags that consume the following
 // argument as their value. Everything else in the flag set is boolean.
 var valuedHeadlessFlags = map[string]bool{
-	"targets":          true,
-	"operator":         true,
-	"timeout":          true,
-	"expiry-warn":      true,
-	"audit":            true,
-	"retention":        true,
-	"export":           true,
-	"report-dir":       true,
-	"resolver":         true,
-	"second-resolver":  true,
-	"log-findings":     false,
-	"enumerate":        false,
-	"check-revocation": false,
-	"deep":             false,
-	"doh":              false,
-	"discover":         false,
-	"discover-ct":      false,
-	"axfr":             false,
+	"targets":           true,
+	"operator":          true,
+	"timeout":           true,
+	"expiry-warn":       true,
+	"audit":             true,
+	"retention":         true,
+	"history-retention": true,
+	"export":            true,
+	"report-dir":        true,
+	"resolver":          true,
+	"second-resolver":   true,
+	"log-findings":      false,
+	"enumerate":         false,
+	"check-revocation":  false,
+	"deep":              false,
+	"doh":               false,
+	"discover":          false,
+	"discover-ct":       false,
+	"axfr":              false,
 }
 
 // reorderHeadlessArgs moves flags ahead of the positional target list so the
@@ -191,31 +194,57 @@ func reorderHeadlessArgs(args []string) []string {
 	return append(flags, positional...)
 }
 
-func runHeadless(args []string) {
-	fs := flag.NewFlagSet("nettools headless", flag.ExitOnError)
+// settingsDefaults seeds the headless flags from the shared settings file (FR-S1/S2).
+func settingsDefaults() headlessOptions {
+	st, _, _ := settings.Load("")
+	return headlessOptions{
+		Operator:         st.Operator,
+		Timeout:          time.Duration(st.Timeout),
+		ExpiryWarnDays:   st.ExpiryWarnDays,
+		Retention:        time.Duration(st.AuditRetention),
+		HistoryRetention: time.Duration(st.HistoryRetention),
+		Resolver:         st.Resolver,
+		SecondResolver:   st.SecondResolver,
+		Budget:           time.Duration(st.Budget),
+		DoHProvider:      st.DoHProvider,
+		Enumerate:        st.Enumerate,
+		Deep:             st.Deep,
+		UseDoH:           st.UseDoH,
+		DiscoverWordlist: st.DiscoverWordlist,
+		DiscoverCT:       st.DiscoverCT,
+		ZoneTransfer:     st.ZoneTransfer,
+		CheckRevocation:  st.CheckRevocation,
+	}
+}
 
-	opts := headlessOptions{}
+func runHeadless(args []string) {
+	fs := flag.NewFlagSet("dnsvigil headless", flag.ExitOnError)
+
+	// A settings file (written on the web Settings page) provides the defaults;
+	// an explicit flag still wins (FR-S1/S2).
+	opts := settingsDefaults()
 	files := fs.String("targets", "", "file of newline-separated targets to import (FR-C1)")
-	fs.StringVar(&opts.Operator, "operator", "cli", "operator name recorded in report and audit (FR-R5)")
-	fs.DurationVar(&opts.Timeout, "timeout", 5*time.Second, "per-query DNS timeout and per-attempt TLS connect/handshake bound")
-	fs.IntVar(&opts.ExpiryWarnDays, "expiry-warn", tlscheck.DefaultExpiryWarnDays, "days-to-expiry warning threshold (FR-C4)")
+	fs.StringVar(&opts.Operator, "operator", opts.Operator, "operator name recorded in report and audit (FR-R5)")
+	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "per-query DNS timeout and per-attempt TLS connect/handshake bound")
+	fs.IntVar(&opts.ExpiryWarnDays, "expiry-warn", opts.ExpiryWarnDays, "days-to-expiry warning threshold (FR-C4)")
 	fs.StringVar(&opts.AuditPath, "audit", "audit.jsonl", "audit log path")
-	fs.DurationVar(&opts.Retention, "retention", 0, "audit retention (keep entries newer than this; 0 disables) (FR-A5)")
+	fs.DurationVar(&opts.Retention, "retention", opts.Retention, "audit retention (keep entries newer than this; 0 disables) (FR-A5)")
+	fs.DurationVar(&opts.HistoryRetention, "history-retention", opts.HistoryRetention, "prune run history older than this; 0 disables (default 30 days)")
 	fs.BoolVar(&opts.LogFindings, "log-findings", false, "record full findings in audit entries (FR-A2)")
 	fs.StringVar(&opts.ExportFormat, "export", "", "export the latest run to json|csv|md|html|pdf into --report-dir (FR-R2/R3)")
-	fs.StringVar(&opts.ReportDir, "report-dir", ".nettools/reports", "directory for exported reports and run history files (FR-R8)")
-	fs.StringVar(&opts.Resolver, "resolver", "", "custom DNS resolver for every query, e.g. 1.1.1.1:53 (FR-D12)")
-	fs.StringVar(&opts.SecondResolver, "second-resolver", "", "second resolver to compare answers against (FR-D11)")
-	fs.DurationVar(&opts.Budget, "budget", engine.DefaultBudget, "bound on the whole run per target; negative disables it (NFR-3)")
+	fs.StringVar(&opts.ReportDir, "report-dir", ".dnsvigil/reports", "directory for exported reports and run history files (FR-R8)")
+	fs.StringVar(&opts.Resolver, "resolver", opts.Resolver, "custom DNS resolver for every query, e.g. 1.1.1.1:53 (FR-D12)")
+	fs.StringVar(&opts.SecondResolver, "second-resolver", opts.SecondResolver, "second resolver to compare answers against (FR-D11)")
+	fs.DurationVar(&opts.Budget, "budget", opts.Budget, "bound on the whole run per target; negative disables it (NFR-3)")
 	fs.StringVar(&opts.WordlistPath, "wordlist", "", "file of names to probe with --discover, one name or label per line (FR-D14)")
-	fs.StringVar(&opts.DoHProvider, "doh-provider", "", "DNS-over-HTTPS provider for --doh: cloudflare|google|quad9 or an https URL (FR-D13)")
-	fs.BoolVar(&opts.Enumerate, "enumerate", false, "probe offered protocols and ciphers (FR-C15/C16) and SNI names (FR-C20); more connections per target")
-	fs.BoolVar(&opts.Deep, "deep", false, "run the extra DNS checks: SRV, DKIM, TLSA, MTA-STS, TLS-RPT, reverse DNS, TTL, delegation (FR-D2/D6/D7/D8/D19/D22/D23)")
-	fs.BoolVar(&opts.UseDoH, "doh", false, "also resolve over DNS-over-HTTPS and compare (FR-D13)")
-	fs.BoolVar(&opts.DiscoverWordlist, "discover", false, "probe a built-in subdomain wordlist under each target domain (FR-D14)")
-	fs.BoolVar(&opts.DiscoverCT, "discover-ct", false, "ask Certificate Transparency logs for subdomains (FR-D15)")
-	fs.BoolVar(&opts.ZoneTransfer, "axfr", false, "attempt a zone transfer against each authoritative server (FR-D16)")
-	fs.BoolVar(&opts.CheckRevocation, "check-revocation", false, "verify OCSP revocation status (FR-C10; off by default)")
+	fs.StringVar(&opts.DoHProvider, "doh-provider", opts.DoHProvider, "DNS-over-HTTPS provider for --doh: cloudflare|google|quad9 or an https URL (FR-D13)")
+	fs.BoolVar(&opts.Enumerate, "enumerate", opts.Enumerate, "probe offered protocols and ciphers (FR-C15/C16) and SNI names (FR-C20); more connections per target")
+	fs.BoolVar(&opts.Deep, "deep", opts.Deep, "run the extra DNS checks: SRV, DKIM, TLSA, MTA-STS, TLS-RPT, reverse DNS, TTL, delegation (FR-D2/D6/D7/D8/D19/D22/D23)")
+	fs.BoolVar(&opts.UseDoH, "doh", opts.UseDoH, "also resolve over DNS-over-HTTPS and compare (FR-D13)")
+	fs.BoolVar(&opts.DiscoverWordlist, "discover", opts.DiscoverWordlist, "probe a built-in subdomain wordlist under each target domain (FR-D14)")
+	fs.BoolVar(&opts.DiscoverCT, "discover-ct", opts.DiscoverCT, "ask Certificate Transparency logs for subdomains (FR-D15)")
+	fs.BoolVar(&opts.ZoneTransfer, "axfr", opts.ZoneTransfer, "attempt a zone transfer against each authoritative server (FR-D16)")
+	fs.BoolVar(&opts.CheckRevocation, "check-revocation", opts.CheckRevocation, "verify OCSP revocation status (FR-C10; off by default)")
 	if err := fs.Parse(reorderHeadlessArgs(args)); err != nil {
 		os.Exit(2)
 	}
@@ -243,7 +272,9 @@ func runHeadless(args []string) {
 	}
 
 	log := audit.New(opts.AuditPath, opts.Retention, opts.Retention > 0)
-	hist := history.New("") // shared default dir so TUI/dashboard see the same history
+	// Shared default dir so the dashboard sees the same history; retention keeps
+	// old runs from accumulating (0 disables automatic pruning).
+	hist := history.New("", history.WithRetention(opts.HistoryRetention))
 	for _, inp := range targets {
 		tgt, err := target.ParseTarget(inp)
 		if err != nil {
@@ -289,13 +320,19 @@ func runHeadless(args []string) {
 			}
 		}
 		if currentFP != "" {
-			_ = hist.Append(tgt.Addr(), currentFP)
+			// Record the findings alongside the fingerprint so the file-based
+			// history/dashboard can show past results, not just change (FR-R8).
+			_ = hist.AppendEntry(history.Entry{
+				Target:      tgt.Addr(),
+				Fingerprint: currentFP,
+				Findings:    res.Findings,
+			})
 		}
 		rin := report.Input{
 			Meta: report.Metadata{
 				Operator: opts.Operator,
 				When:     time.Now(),
-				ToolName: "nettools",
+				ToolName: "dnsvigil",
 				Version:  version,
 				Targets:  []string{tgt.Addr()},
 			},
@@ -370,9 +407,11 @@ func exportReport(rin report.Input, opts headlessOptions) (string, error) {
 	if err := os.MkdirAll(opts.ReportDir, 0o700); err != nil {
 		return "", err
 	}
-	name := fmt.Sprintf("nettools-%s%s", rin.Meta.When.Format("20060102-150405"), ext)
+	name := fmt.Sprintf("dnsvigil-%s%s", rin.Meta.When.Format("20060102-150405"), ext)
 	path := filepath.Join(opts.ReportDir, name)
-	f, err := os.Create(path)
+	// Reports can carry sensitive findings; keep them owner-only like the audit
+	// log and history (FR-A6), never world-readable.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return "", err
 	}

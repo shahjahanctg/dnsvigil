@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 )
 
 func sampleInput() Input {
@@ -13,7 +13,7 @@ func sampleInput() Input {
 		Meta: Metadata{
 			Operator: "cli",
 			When:     time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC),
-			ToolName: "nettools",
+			ToolName: "dnsvigil",
 			Version:  "0.1.0-dev",
 			Targets:  []string{"example.com:443", "example.com:8443"},
 		},
@@ -46,7 +46,7 @@ func TestWriteTextMetadataPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteTextString: %v", err)
 	}
-	for _, want := range []string{"operator:   cli", "nettools 0.1.0-dev", "targets:    2", "example.com:443", "example.com:8443", "started:    2026-10-11"} {
+	for _, want := range []string{"operator:   cli", "dnsvigil 0.1.0-dev", "targets:    2", "example.com:443", "example.com:8443", "started:    2026-10-11"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report missing metadata %q", want)
 		}
@@ -91,7 +91,7 @@ func TestWriteTextRemediationPerKind(t *testing.T) {
 }
 
 func TestWriteTextEmptyRun(t *testing.T) {
-	in := Input{Meta: Metadata{ToolName: "nettools", Version: "x", Operator: "cli"}}
+	in := Input{Meta: Metadata{ToolName: "dnsvigil", Version: "x", Operator: "cli"}}
 	out, err := WriteTextString(in)
 	if err != nil {
 		t.Fatalf("WriteTextString: %v", err)

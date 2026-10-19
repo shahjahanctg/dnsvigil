@@ -1,4 +1,4 @@
-# Nettools Uniqueness Review
+# dnsvigil Uniqueness Review
 
 > Status: working draft for operator review, not yet voted on.
 

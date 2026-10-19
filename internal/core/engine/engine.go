@@ -3,10 +3,10 @@ package engine
 import (
 	"time"
 
-	"github.com/soc-tool/internal/core/dnscheck"
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
-	"github.com/soc-tool/internal/core/tlscheck"
+	"github.com/dnsvigil/dnsvigil/internal/core/dnscheck"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
+	"github.com/dnsvigil/dnsvigil/internal/core/tlscheck"
 )
 
 // DefaultBudget bounds one target's whole run (NFR-2/3). A batch is bounded

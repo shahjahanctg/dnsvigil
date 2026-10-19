@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dnsvigil/dnsvigil/internal/core/dnscheck"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
+	"github.com/dnsvigil/dnsvigil/internal/core/tlscheck"
 	"github.com/miekg/dns"
-	"github.com/soc-tool/internal/core/dnscheck"
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
-	"github.com/soc-tool/internal/core/tlscheck"
 )
 
 // dnsFixture is a minimal in-process UDP DNS server for offline engine tests.
@@ -104,7 +104,7 @@ func mustTestCert(t *testing.T, notBefore, notAfter time.Time) (tls.Certificate,
 	}
 	tmpl := x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "127.0.0.1", Organization: []string{"soc-tool engine test"}},
+		Subject:               pkix.Name{CommonName: "127.0.0.1", Organization: []string{"dnsvigil engine test"}},
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
 		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1)},

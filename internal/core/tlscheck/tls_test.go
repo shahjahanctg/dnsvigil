@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
 )
 
 // mustCert builds a self-signed certificate for tests.
@@ -26,7 +26,7 @@ func mustCert(t *testing.T, host string, notBefore, notAfter time.Time) *x509.Ce
 	}
 	tmpl := x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: host, Organization: []string{"soc-tool test"}},
+		Subject:               pkix.Name{CommonName: host, Organization: []string{"dnsvigil test"}},
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
 		DNSNames:              []string{host},

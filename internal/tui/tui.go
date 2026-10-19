@@ -7,14 +7,15 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/soc-tool/internal/core/dnscheck"
-	"github.com/soc-tool/internal/core/engine"
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
-	"github.com/soc-tool/internal/core/tlscheck"
+	"github.com/dnsvigil/dnsvigil/internal/core/dnscheck"
+	"github.com/dnsvigil/dnsvigil/internal/core/engine"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
+	"github.com/dnsvigil/dnsvigil/internal/core/tlscheck"
 )
 
 // runCheck is the shared-core entry point (FR-S2). Tests replace it so the
@@ -34,7 +35,7 @@ type Options struct {
 	AXFR             bool
 	Enumerate        bool
 	CheckRevocation  bool
-	Budget          string
+	Budget           string
 }
 
 // Model is the single Bubble Tea state model.
@@ -47,6 +48,8 @@ type Model struct {
 	opts     Options
 	// pathEntry is true while the operator is typing the wordlist path.
 	pathEntry bool
+	// budgetEntry is true while the operator is typing the run budget.
+	budgetEntry bool
 }
 
 // runResult is one target's merged result plus its canonical address.
@@ -61,6 +64,7 @@ func New() Model { return Model{} }
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd { return nil }
+
 var doHProviders = []string{"", "cloudflare", "google", "quad9"}
 
 // nextDoHProvider rotates through the provider list (ctrl+p).
@@ -73,7 +77,18 @@ func nextDoHProvider(current string) string {
 	return doHProviders[0]
 }
 
-// New returns the initialised model.
+// parseBudget turns the operator's budget text into a duration; blank or
+// invalid input leaves the shared core's default bound in place (0).
+func parseBudget(s string) time.Duration {
+	if strings.TrimSpace(s) == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(s))
+	if err != nil {
+		return 0
+	}
+	return d
+}
 
 // Update handles input keys; 'enter' runs the check, 'q' quits (FR-S4:
 // keyboard-only). Check execution is synchronous and bounded per run.
@@ -88,12 +103,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "enter":
+			// Enter closes an open path/budget entry; otherwise it runs the
+			// typed target.
+			if m.pathEntry || m.budgetEntry {
+				m.pathEntry, m.budgetEntry = false, false
+				return m, nil
+			}
 			m.runTarget(strings.TrimSpace(m.input))
 			m.input = ""
 			return m, nil
 		case "backspace":
-			if len(m.input) > 0 {
-				m.input = m.input[:len(m.input)-1]
+			switch {
+			case m.pathEntry:
+				if len(m.opts.WordlistPath) > 0 {
+					m.opts.WordlistPath = m.opts.WordlistPath[:len(m.opts.WordlistPath)-1]
+				}
+			case m.budgetEntry:
+				if len(m.opts.Budget) > 0 {
+					m.opts.Budget = m.opts.Budget[:len(m.opts.Budget)-1]
+				}
+			default:
+				if len(m.input) > 0 {
+					m.input = m.input[:len(m.input)-1]
+				}
 			}
 			return m, nil
 		case "up":
@@ -124,7 +156,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.opts.ZoneTransfer = !m.opts.ZoneTransfer
 			return m, nil
 		case "ctrl+b":
-			m.opts.Budget = ""
+			m.budgetEntry = true
+			m.pathEntry = false
 			return m, nil
 		case "ctrl+r":
 			m.opts.CheckRevocation = !m.opts.CheckRevocation
@@ -136,13 +169,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Enter the wordlist path; while it is open, typing appends to the
 			// path rather than the target entry.
 			m.pathEntry = true
+			m.budgetEntry = false
 			return m, nil
 		case "esc":
 			m.pathEntry = false
+			m.budgetEntry = false
 			return m, nil
 		}
-		// Printable characters append to the target entry.
-		m.input += msg.String()
+		// Printable characters go to whichever entry is open (FR-S4).
+		switch {
+		case m.pathEntry:
+			m.opts.WordlistPath += msg.String()
+		case m.budgetEntry:
+			m.opts.Budget += msg.String()
+		default:
+			m.input += msg.String()
+		}
 		return m, nil
 	}
 	return m, nil
@@ -175,11 +217,17 @@ func (m Model) context() engine.Context {
 		DNSContext: dnscheck.Context{
 			Deep:             m.opts.Deep,
 			UseDoH:           m.opts.UseDoH,
+			DoHProvider:      m.opts.DoHProvider,
+			WordlistPath:     m.opts.WordlistPath,
 			DiscoverWordlist: m.opts.DiscoverWordlist,
 			DiscoverCT:       m.opts.DiscoverCT,
 			ZoneTransfer:     m.opts.ZoneTransfer,
 		},
-		TLSContext: tlscheck.Context{Enumerate: m.opts.Deep},
+		TLSContext: tlscheck.Context{
+			Enumerate:       m.opts.Enumerate,
+			CheckRevocation: m.opts.CheckRevocation,
+		},
+		Budget: parseBudget(m.opts.Budget),
 	}
 }
 
@@ -192,20 +240,33 @@ func (m Model) optionsLine() string {
 		}
 		return "off"
 	}
+	provider := m.opts.DoHProvider
+	if provider == "" {
+		provider = "default"
+	}
+	wordlist := m.opts.WordlistPath
+	if wordlist == "" {
+		wordlist = "(built-in)"
+	}
+	budget := m.opts.Budget
+	if budget == "" {
+		budget = "60s"
+	}
 	return fmt.Sprintf(
-		"checks: deep(ctrl+d)=%s doh(ctrl+o)=%s wordlist(ctrl+w)=%s ct-log(ctrl+t)=%s axfr(ctrl+x)=%s\n\n",
-		onoff(m.opts.Deep), onoff(m.opts.UseDoH), onoff(m.opts.DiscoverWordlist),
-		onoff(m.opts.DiscoverCT), onoff(m.opts.ZoneTransfer))
+		"checks: deep(ctrl+d)=%s doh(ctrl+o)=%s doh-provider(ctrl+p)=%s wordlist(ctrl+w)=%s wordlist-file(ctrl+l)=%s ct-log(ctrl+t)=%s axfr(ctrl+x)=%s revocation(ctrl+r)=%s enumerate(ctrl+e)=%s budget(ctrl+b)=%s\n\n",
+		onoff(m.opts.Deep), onoff(m.opts.UseDoH), provider, onoff(m.opts.DiscoverWordlist),
+		wordlist, onoff(m.opts.DiscoverCT), onoff(m.opts.ZoneTransfer),
+		onoff(m.opts.CheckRevocation), onoff(m.opts.Enumerate), budget)
 }
 
 // View renders the whole interface with text labels only (FR-S5: no meaning
 // conveyed by colour alone; the plain output works without a colour terminal).
 func (m Model) View() string {
 	if m.quitting {
-		return "nettools closed.\n"
+		return "dnsvigil closed.\n"
 	}
 	var b strings.Builder
-	b.WriteString("nettools — certificate + DNS audit\n")
+	b.WriteString("dnsvigil — certificate + DNS audit\n")
 	b.WriteString("type a target (host or host:port), press enter; q quits\n")
 	b.WriteString(m.optionsLine())
 

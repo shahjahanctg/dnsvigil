@@ -1,4 +1,4 @@
-# SOC Tool — Network Inspection
+# dnsvigil — Network Inspection
 
 A security tool that checks TLS certificates and DNS records for your own assets, records the evidence, and ships as a single dependency-free binary with a headless CLI, terminal UI, and local web UI.
 
@@ -11,20 +11,20 @@ A security tool that checks TLS certificates and DNS records for your own assets
 2. Build the binaries:
 
 ```bash
-cd cmd/nettools
-CGO_ENABLED=0 go build -o ../build/nettools-linux-amd64 .
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../build/nettools-linux-wsl .
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../build/nettools-linux-arm64 .
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o ../build/nettools-windows-amd64.exe .
+cd cmd/dnsvigil
+CGO_ENABLED=0 go build -o ../build/dnsvigil-linux-amd64 .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../build/dnsvigil-linux-wsl .
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../build/dnsvigil-linux-arm64 .
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o ../build/dnsvigil-windows-amd64.exe .
 ```
 
 2. Run the three interfaces:
 
 ```bash
-./nettools-linux-amd64 --version              # show version
-./nettools-linux-amd64 --headless example.com # full TLS + DNS report
-./nettools-linux-amd64 --tui                  # Bubble Tea terminal UI
-./nettools-linux-amd64 --gui                  # embedded web UI (loopback only, http://127.0.0.1:8089)
+./dnsvigil-linux-amd64 --version              # show version
+./dnsvigil-linux-amd64 --headless example.com # full TLS + DNS report
+./dnsvigil-linux-amd64 --tui                  # Bubble Tea terminal UI
+./dnsvigil-linux-amd64 --gui                  # embedded web UI (loopback only, http://127.0.0.1:8089)
 ```
 
 ## Real Examples
@@ -32,14 +32,14 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o ../build/nettools-windows-am
 ### Check example.com TLS + DNS
 
 ```bash
-./nettools --headless example.com
+./dnsvigil --headless example.com
 ```
 
 Output highlights:
 
 ```
 === SUMMARY ===
-tool:       nettools 0.1.0-dev
+tool:       dnsvigil 0.1.0-dev
 operator:   cli
 started:    2026-10-18T22:19:41+06:00
 targets:    1
@@ -77,7 +77,7 @@ findings:   22 total
 ### Check a bad port (how failures are recorded)
 
 ```bash
-./nettools --headless example.com:9999
+./dnsvigil --headless example.com:9999
 ```
 
 The run continues past the parse error and records a JSONL audit entry for the failure path.
@@ -85,7 +85,7 @@ The run continues past the parse error and records a JSONL audit entry for the f
 ### Use a targets file
 
 ```bash
-./nettools --headless --targets hosts.txt --operator "red-team"
+./dnsvigil --headless --targets hosts.txt --operator "red-team"
 ```
 
 `hosts.txt` can contain one host:port per line, with `#` comments ignored.
@@ -93,7 +93,7 @@ The run continues past the parse error and records a JSONL audit entry for the f
 ### Query a specific resolver, or compare two
 
 ```bash
-./nettools --headless --resolver 1.1.1.1:53 --second-resolver 8.8.8.8:53 example.com
+./dnsvigil --headless --resolver 1.1.1.1:53 --second-resolver 8.8.8.8:53 example.com
 ```
 
 Every DNS query goes to `--resolver`; setting `--second-resolver` adds a divergence finding (MEDIUM) when the two disagree.
@@ -101,7 +101,7 @@ Every DNS query goes to `--resolver`; setting `--second-resolver` adds a diverge
 ### Enumerate protocols and ciphers, and check revocation
 
 ```bash
-./nettools --headless --enumerate --check-revocation example.com
+./dnsvigil --headless --enumerate --check-revocation example.com
 ```
 
 `--enumerate` makes more connections per target (one per protocol version and cipher suite, plus an SNI probe) and flags weak ciphers HIGH; `--check-revocation` queries the certificate's OCSP responder and its CRL distribution points.
@@ -109,7 +109,7 @@ Every DNS query goes to `--resolver`; setting `--second-resolver` adds a diverge
 ### Run the deeper DNS checks
 
 ```bash
-./nettools --headless --deep example.com
+./dnsvigil --headless --deep example.com
 ```
 
 `--deep` adds SRV, DKIM, TLSA, MTA-STS, TLS-RPT, reverse DNS (with forward confirmation), TTL and delegation checks. It multiplies the number of DNS queries, so it is off by default.
@@ -117,10 +117,10 @@ Every DNS query goes to `--resolver`; setting `--second-resolver` adds a diverge
 ### Resolve over DNS-over-HTTPS, discover names, or try a zone transfer
 
 ```bash
-./nettools --headless --doh example.com
-./nettools --headless --discover example.com            # built-in subdomain wordlist
-./nettools --headless --discover-ct example.com         # Certificate Transparency names
-./nettools --headless --axfr example.com                # zone transfer attempt
+./dnsvigil --headless --doh example.com
+./dnsvigil --headless --discover example.com            # built-in subdomain wordlist
+./dnsvigil --headless --discover-ct example.com         # Certificate Transparency names
+./dnsvigil --headless --axfr example.com                # zone transfer attempt
 ```
 
 These reach beyond the target's own records (a DoH resolver, a CT log, an AXFR attempt), so they are off by default and only ever ask about the operator-supplied domain (FR-S8).
@@ -155,7 +155,7 @@ Every finding carries a severity, a plain-language reason, and technical detail.
 ### Set custom expiry warning
 
 ```bash
-./nettools --headless --expiry-warn 68 example.com
+./dnsvigil --headless --expiry-warn 68 example.com
 ```
 
 Warns if the certificate has more than 68 days remaining.
@@ -163,7 +163,7 @@ Warns if the certificate has more than 68 days remaining.
 ### Run with audit log and retention
 
 ```bash
-./nettools --headless --log-findings --retention 720h example.com
+./dnsvigil --headless --log-findings --retention 720h example.com
 ```
 
 Finds are recorded to `audit.jsonl`; entries older than 720 hours are removed on `--rotate`.
@@ -171,10 +171,10 @@ Finds are recorded to `audit.jsonl`; entries older than 720 hours are removed on
 ### Export the run (JSON, CSV, Markdown, HTML)
 
 ```bash
-./nettools --headless --export json --report-dir .nettools/reports example.com
+./dnsvigil --headless --export json --report-dir .dnsvigil/reports example.com
 ```
 
-Prints the written path on stderr (for example `exported: .nettools/reports/nettools-20261019-070210.json`).
+Prints the written path on stderr (for example `exported: .dnsvigil/reports/dnsvigil-20261019-070210.json`).
 
 > Headless flags come **before** the target list. Flags written after a target are still parsed (the tool reorders them), but flags-first is the documented form.
 
@@ -224,7 +224,7 @@ Prints the written path on stderr (for example `exported: .nettools/reports/nett
 ## What's in the Tree
 | Path | Purpose |
 |------|---------|
-| `cmd/nettools/main.go` | Entry point routing: `--headless \| --tui \| --gui` |
+| `cmd/dnsvigil/main.go` | Entry point routing: `--headless \| --tui \| --gui` |
 | `cmd/build/build.go` | Build pipeline note (documented, no Go package) |
 | `internal/core/target/` | `Target` parsing/validation (`target.go`, `helpers.go`) |
 | `internal/core/finding/` | Severity model + `Finding` results model consumed by TUI/web UI |
@@ -248,7 +248,7 @@ gofmt -l .             # formatting check
 
 Live reference comparison passed against `openssl s_client` on example.com (subject, issuer, validity dates, serial).
 
-Release binaries embed VCS metadata: `go version -m ./nettools` shows `vcs.revision` and `vcs.modified`. A binary built while the worktree has uncommitted changes reports `vcs.modified=true` — that reflects the build environment, not a local patch, because committing the rebuilt binary is itself a pending change.
+Release binaries embed VCS metadata: `go version -m ./dnsvigil` shows `vcs.revision` and `vcs.modified`. A binary built while the worktree has uncommitted changes reports `vcs.modified=true` — that reflects the build environment, not a local patch, because committing the rebuilt binary is itself a pending change.
 
 ## Known State
 

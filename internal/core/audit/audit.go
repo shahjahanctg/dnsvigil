@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 )
 
 // auditEntry is a deprecated struct kept for older callers.

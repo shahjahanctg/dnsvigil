@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
 )
 
 // targetFor parses a target for tests that only need an address.

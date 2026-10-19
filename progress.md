@@ -1,4 +1,4 @@
-# Progress — SOC Tool (Network Inspection Module)
+# Progress — dnsvigil (Network Inspection Module)
 
 **Owner:** Buffy (agentic creation workflow)
 **Date:** 2026-10-11
@@ -6,7 +6,7 @@
 
 ## Overall status
 
-- **Deliverable verified and complete:** headless CLI in `cmd/nettools/main.go`,
+- **Deliverable verified and complete:** headless CLI in `cmd/dnsvigil/main.go`,
   rebuilt with `CGO_ENABLED=0` for linux-amd64, linux-arm64, windows-amd64.
 - **Latest session (2026-10-18):** 30 tests across 9 packages, all offline.
   Three more real bugs found and fixed by tests (see task 8).
@@ -55,12 +55,12 @@
    - `internal/core/report/report.go`: remediation listed guidance for
      INFO findings (e.g. "add A record" while the record exists).
      Remediation now only covers Medium+ (FR-R6); new test.
-   - `cmd/nettools/main.go`: removed dead `printReport`/`severityIdx`
+   - `cmd/dnsvigil/main.go`: removed dead `printReport`/`severityIdx`
      (report package superseded them).
    - New tests: `engine_test.go` (in-process DNS + TLS server fixtures;
      happy path, expired cert, unknown-CA self-signed, unreachable),
      `audit_test.go` failure path (FR-A1/A3 complete),
-     `cmd/nettools/main_test.go` (headless arg routing).
+     `cmd/dnsvigil/main_test.go` (headless arg routing).
    - TLS server fixtures work via the `RootCAs` trust seam added to
      `tlscheck.Context`.
 
@@ -113,7 +113,7 @@
   `--targets`-style flags after `--headless` reach the headless flagset.
 - **openssl RC:** live run vs `openssl s_client -connect example.com:443`
   matched on subject, issuer, notBefore, notAfter.
-- Cleanup: removed `bin/` scratch build and stray root `nettools`
+- Cleanup: removed `bin/` scratch build and stray root `dnsvigil`
   binary; rebuilt all four targets (linux amd64/arm64/wsl + windows).
 
 ## Files owned

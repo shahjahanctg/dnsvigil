@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
 	"github.com/miekg/dns"
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
 )
 
 // dnsFixture is an in-process UDP DNS server for offline tests (FR-D12).

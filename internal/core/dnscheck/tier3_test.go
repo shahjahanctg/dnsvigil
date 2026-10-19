@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
 	"github.com/miekg/dns"
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
 )
 
 // zoneFixture is a small authoritative DNS server used by the tier-3 tests.

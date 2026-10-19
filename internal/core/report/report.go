@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 )
 
 // Metadata describes one run (FR-R5).

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 	"github.com/miekg/dns"
-	"github.com/soc-tool/internal/core/finding"
 )
 
 // chainFixture serves a synthetic DNSSEC hierarchy: the root, a signed TLD and

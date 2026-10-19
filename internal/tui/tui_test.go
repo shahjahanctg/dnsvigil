@@ -6,9 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/soc-tool/internal/core/engine"
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
+	"github.com/dnsvigil/dnsvigil/internal/core/engine"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
 )
 
 func TestKeyboardFlowAcceptance(t *testing.T) {
@@ -62,10 +62,17 @@ func TestKeyboardFlowAcceptance(t *testing.T) {
 	if gotTarget.Addr() != "example.test:443" {
 		t.Errorf("shared core received target %q", gotTarget.Addr())
 	}
-	if !gotCtx.DNSContext.Deep || !gotCtx.DNSContext.UseDoH || !gotCtx.TLSContext.Enumerate || gotCtx.DNSContext.DoHProvider != "google" || gotCtx.DNSContext.WordlistPath != "names.txt" || !gotCtx.TLSContext.CheckRevocation {
+	// The two toggles pressed above must reach the shared core; every other
+	// switch stays at its off default (FR-S2).
+	if !gotCtx.DNSContext.Deep || !gotCtx.DNSContext.UseDoH {
 		t.Errorf("switches must reach the shared core (FR-S2): %+v", gotCtx)
 	}
-	
+	if gotCtx.TLSContext.Enumerate || gotCtx.TLSContext.CheckRevocation ||
+		gotCtx.DNSContext.DoHProvider != "" || gotCtx.DNSContext.WordlistPath != "" ||
+		gotCtx.DNSContext.DiscoverWordlist || gotCtx.DNSContext.DiscoverCT || gotCtx.DNSContext.ZoneTransfer {
+		t.Errorf("untouched switches must stay off: %+v", gotCtx)
+	}
+
 	if m.(Model).input != "" {
 		t.Errorf("the entry should be cleared after a run, got %q", m.(Model).input)
 	}
@@ -98,7 +105,7 @@ func teaKey(name string) tea.KeyMsg {
 
 func TestViewEmptyState(t *testing.T) {
 	out := New().View()
-	if !strings.Contains(out, "nettools") || !strings.Contains(out, "(no runs yet)") {
+	if !strings.Contains(out, "dnsvigil") || !strings.Contains(out, "(no runs yet)") {
 		t.Errorf("empty view unexpected: %s", out)
 	}
 }
@@ -188,7 +195,7 @@ func TestKeyboardSwitchesReachCore(t *testing.T) {
 		m, _ = m.Update(teaKey(string(r)))
 	}
 	m, _ = m.Update(teaKey("enter"))
-	if gotCtx.DNSContext.DoHProvider != "" || gotCtx.DNSContext.WordlistPath != "names.txt" {
+	if gotCtx.DNSContext.DoHProvider != "google" || gotCtx.DNSContext.WordlistPath != "names.txt" {
 		t.Errorf("switches must reach the core: %+v", gotCtx.DNSContext)
 	}
 	if gotCtx.DNSContext.UseDoH != true {

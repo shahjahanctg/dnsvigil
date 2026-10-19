@@ -12,8 +12,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
 	"golang.org/x/crypto/ocsp"
 )
 

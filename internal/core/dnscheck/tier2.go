@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 	"github.com/miekg/dns"
-	"github.com/soc-tool/internal/core/finding"
 )
 
 // Lookup is a local raw lookup over the shared client behaviour so tier-2

@@ -6,15 +6,186 @@
 <style>
   body { font-family: monospace, sans-serif; margin: 2rem; color: #111; background: #fff; }
   h1 { font-size: 1.2rem; }
-  textarea, button { font-family: inherit; font-size: 1rem; }
+  textarea, button, input { font-family: inherit; font-size: 1rem; }
   table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
   td, th { border: 1px solid #666; padding: 0.35rem 0.6rem; text-align: left; vertical-align: top; }
   .sev { font-weight: bold; }
   .detail { white-space: pre-wrap; color: #333; }
+  .export-section { margin-top: 2rem; padding: 1rem; border: 1px solid #ddd; background: #f9f9f9; }
+  .export-section h3 { margin-top: 0; }
+  .export-section button { margin-right: 0.5rem; margin-bottom: 0.5rem; padding: 0.4rem 0.8rem; }
+  #export-status { margin-left: 1rem; font-style: italic; }
+  nav { margin-bottom: 1.5rem; }
+  nav a { margin-right: 0.75rem; }
+  .summary { color: #555; }
+  .ok { color: #1a7f37; font-weight: bold; }
+  .err { color: #b00020; }
+  .filter { margin: 1rem 0; }
+  .danger { background: #b00020; color: #fff; border: 1px solid #7a0016; padding: 0.4rem 0.8rem; }
+  details summary { cursor: pointer; }
 </style>
 </head>
 <body>
-<h1>nettools — local web interface</h1>
+<nav>
+  <a href="/">Run</a>
+  <a href="/history">History</a>
+  <a href="/settings">Settings</a>
+</nav>
+
+{{if eq .View "settings"}}
+<h1>Settings</h1>
+{{if .Saved}}<p class="ok">Settings saved.</p>{{end}}
+{{if .Error}}<p class="err">error: {{.Error}}</p>{{end}}
+<p>Shared defaults for every interface (CLI and web), saved to <code>.dnsvigil/settings.json</code>.
+   File locations are command-line only.</p>
+<form method="POST" action="/settings">
+  <fieldset>
+    <legend>Report &amp; run</legend>
+    <label>Operator <input type="text" name="operator" size="20" value="{{.Settings.Operator}}"></label><br>
+    <label>Timeout (e.g. 5s) <input type="text" name="timeout" size="10" value="{{.Settings.Timeout}}"></label><br>
+    <label>Expiry warn days <input type="text" name="expiry-warn" size="6" value="{{.Settings.ExpiryWarnDays}}"></label><br>
+    <label>Run budget (e.g. 60s) <input type="text" name="budget" size="10" value="{{.Settings.Budget}}"></label><br>
+    <label>Audit retention (0 disables) <input type="text" name="audit-retention" size="10" value="{{.Settings.AuditRetention}}"></label><br>
+    <label>History retention (0 disables) <input type="text" name="history-retention" size="10" value="{{.Settings.HistoryRetention}}"></label><br>
+  </fieldset>
+  <fieldset>
+    <legend>Resolvers</legend>
+    <label>Resolver (host:port) <input type="text" name="resolver" size="30" value="{{.Settings.Resolver}}"></label><br>
+    <label>Second resolver <input type="text" name="second-resolver" size="30" value="{{.Settings.SecondResolver}}"></label><br>
+  </fieldset>
+  <fieldset>
+    <legend>Default checks</legend>
+    <label><input type="checkbox" name="deep" value="1"{{if .Settings.Deep}} checked{{end}}> deep &mdash; SRV, DKIM, TLSA, MTA-STS, TLS-RPT, reverse DNS, TTL, delegation</label><br>
+    <label><input type="checkbox" name="enumerate" value="1"{{if .Settings.Enumerate}} checked{{end}}> enumerate &mdash; protocols, ciphers, SNI names</label><br>
+    <label><input type="checkbox" name="check-revocation" value="1"{{if .Settings.CheckRevocation}} checked{{end}}> check-revocation &mdash; OCSP and CRL</label><br>
+    <label><input type="checkbox" name="doh" value="1"{{if .Settings.UseDoH}} checked{{end}}> doh &mdash; compare DNS-over-HTTPS answers</label>
+    <label>provider
+      <select name="doh-provider">
+        <option value=""{{if eq .Settings.DoHProvider ""}} selected{{end}}>default (cloudflare)</option>
+        <option value="cloudflare"{{if eq .Settings.DoHProvider "cloudflare"}} selected{{end}}>cloudflare</option>
+        <option value="google"{{if eq .Settings.DoHProvider "google"}} selected{{end}}>google</option>
+        <option value="quad9"{{if eq .Settings.DoHProvider "quad9"}} selected{{end}}>quad9</option>
+      </select>
+    </label><br>
+    <label><input type="checkbox" name="discover" value="1"{{if .Settings.DiscoverWordlist}} checked{{end}}> discover &mdash; subdomain wordlist</label><br>
+    <label><input type="checkbox" name="discover-ct" value="1"{{if .Settings.DiscoverCT}} checked{{end}}> discover-ct &mdash; Certificate Transparency names</label><br>
+    <label><input type="checkbox" name="axfr" value="1"{{if .Settings.ZoneTransfer}} checked{{end}}> axfr &mdash; zone transfer attempt</label><br>
+  </fieldset>
+  <button type="submit">Save settings</button>
+</form>
+{{else if eq .View "history"}}
+<h1>History</h1>
+{{if .ClearedCount}}<p class="ok">Deleted {{.ClearedCount}} run(s).</p>{{end}}
+{{if .Error}}<p class="err">error: {{.Error}}</p>{{end}}
+
+<p class="summary">
+  {{.TotalRuns}} run(s){{if .Filter}} matching &ldquo;{{.Filter}}&rdquo;{{end}}
+  &middot; {{.UniqueTargets}} target(s)
+  {{if .HasRange}}&middot; {{.FirstWhen.Format "2006-01-02 15:04"}} &rarr; {{.LastWhen.Format "2006-01-02 15:04"}}{{end}}
+</p>
+{{if .Retention}}<p class="summary">Runs older than {{.Retention}} are pruned automatically.{{else}}<p class="summary">Automatic pruning is disabled.</p>{{end}}
+
+<form method="GET" action="/history" class="filter">
+  <label>Target filter <input type="text" name="target" size="30" value="{{.Filter}}"></label>
+  <button type="submit">Filter</button>
+  {{if .Filter}}<a href="/history">clear filter</a>{{end}}
+</form>
+
+{{if .History}}
+<table>
+  <tr><th>When</th><th>Target</th><th>Fingerprint</th><th>Findings</th></tr>
+  {{range .History}}
+  <tr>
+    <td>{{.When.Format "2006-01-02 15:04:05"}}</td>
+    <td>{{.Target}}</td>
+    <td>{{.ShortFP}}</td>
+    <td>{{len .Findings}}
+      {{if .Findings}}
+      <details>
+        <summary>show</summary>
+        <table>
+          <tr><th>Severity</th><th>Kind</th><th>What</th><th>Detail</th></tr>
+          {{range .Findings}}
+          <tr>
+            <td class="sev">{{.Severity.Name}}</td>
+            <td>{{.Kind}}</td>
+            <td>{{.What}}</td>
+            <td class="detail">{{.Detail}}</td>
+          </tr>
+          {{end}}
+        </table>
+      </details>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+</table>
+
+<h2>Clear history</h2>
+{{if .PreviewPending}}
+<div class="confirm-panel">
+  <p class="err"><strong>This will delete {{.PreviewCount}} run(s).</strong> This cannot be undone.</p>
+  <form method="POST" action="/history/clear">
+    <input type="hidden" name="mode" value="{{.ClearMode}}">
+    <input type="hidden" name="target" value="{{.ClearTarget}}">
+    <input type="hidden" name="age" value="{{.ClearAge}}">
+    <input type="hidden" name="confirm" value="yes">
+    <button type="submit" class="danger">Confirm delete</button>
+    <a href="/history">Cancel</a>
+  </form>
+</div>
+{{else}}
+<form method="POST" action="/history/clear" class="clear-form">
+  <label>Mode
+    <select name="mode" id="clear-mode">
+      <option value="all"{{if eq .ClearMode "all"}} selected{{end}}>Everything</option>
+      <option value="target"{{if eq .ClearMode "target"}} selected{{end}}>By target (domain)</option>
+      <option value="age"{{if eq .ClearMode "age"}} selected{{end}}>Older than</option>
+      <option value="target-age"{{if eq .ClearMode "target-age"}} selected{{end}}>Target + older than</option>
+    </select>
+  </label>
+  <span id="clear-target-wrap">
+    <label>Target
+      <select name="target">
+        <option value="">&mdash; select &mdash;</option>
+        {{range .ClearTargets}}
+        <option value="{{.Target}}"{{if eq $.ClearTarget .Target}} selected{{end}}>{{.Target}} ({{.Count}})</option>
+        {{end}}
+      </select>
+    </label>
+  </span>
+  <span id="clear-age-wrap">
+    <label>Older than
+      <select name="age">
+        {{range .Ages}}
+        <option value="{{.Value}}"{{if eq $.ClearAge .Value}} selected{{end}}>{{.Label}}</option>
+        {{end}}
+      </select>
+    </label>
+  </span>
+  <button type="submit">Preview deletion</button>
+</form>
+<script>
+  (function () {
+    var mode = document.getElementById('clear-mode');
+    if (!mode) { return; }
+    function sync() {
+      var m = mode.value;
+      document.getElementById('clear-target-wrap').style.display = (m === 'target' || m === 'target-age') ? 'inline' : 'none';
+      document.getElementById('clear-age-wrap').style.display = (m === 'age' || m === 'target-age') ? 'inline' : 'none';
+    }
+    mode.addEventListener('change', sync);
+    sync();
+  })();
+</script>
+{{end}}
+{{else}}
+<p>No history yet. Run an audit to record one.</p>
+{{end}}
+
+{{else}}
+
+<h1>dnsvigil — local web interface</h1>
 <p>Enter operator-supplied targets, one per line. Blank lines and <code>#</code> comments are ignored.</p>
 <form action="/run" method="POST">
   <textarea name="targets" rows="6" cols="60">{{.Targets}}</textarea><br><br>
@@ -45,8 +216,63 @@
   <button type="submit">Run audit</button>
 </form>
 
-{{if .Error}}<p>error: {{.Error}}</p>{{end}}
-{{if .UseDoH}}<p>DNS-over-HTTPS comparison was requested for this run.</p>{{end}}
+  <div class="export-section">
+    <h3>Download Report</h3>
+    <p>Download the latest run findings in your preferred format:</p>
+    <button type="button" onclick="downloadExport('json')">Download JSON</button>
+    <button type="button" onclick="downloadExport('csv')">Download CSV</button>
+    <button type="button" onclick="downloadExport('md')">Download Markdown</button>
+    <button type="button" onclick="downloadExport('html')">Download HTML</button>
+    <span id="export-status"></span>
+  </div>
+
+  <script>
+    function downloadExport(format) {
+      const status = document.getElementById('export-status');
+      status.textContent = 'Downloading ' + format + '...';
+      status.style.color = '#007bff';
+
+      fetch('/export/' + format, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams(new FormData(document.querySelector('form')))
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Export failed');
+        }
+        return response.blob();
+      })
+      .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'dnsvigil-' + new Date().toISOString().slice(0, 10) + '.' + format;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        status.textContent = 'Download complete!';
+        status.style.color = '#28a745';
+        setTimeout(() => {
+          status.textContent = '';
+        }, 3000);
+      })
+      .catch(error => {
+        status.textContent = 'Error: ' + error.message;
+        status.style.color = '#dc3545';
+      });
+    }
+  </script>
+
+{{if .Error}}
+<p>error: {{.Error}}</p>
+{{end}}
+{{if .UseDoH}}
+<p>DNS-over-HTTPS comparison was requested for this run.</p>
+{{end}}
 
 {{if .Findings}}
 <h2>Findings ({{len .Findings}}, most severe first)</h2>
@@ -62,14 +288,23 @@
   {{end}}
 </table>
 {{end}}
+
 {{if .History}}
-<h2>Recent runs (history)</h2>
+<h2>Recent activity</h2>
 <table>
-  <tr><th>When</th><th>Target</th><th>Certificate fingerprint</th></tr>
+  <tr><th>When</th><th>Target</th><th>Fingerprint</th><th>Findings</th></tr>
   {{range .History}}
-  <tr><td>{{.When.Format "2006-01-02 15:04:05"}}</td><td>{{.Target}}</td><td>{{.Fingerprint}}</td></tr>
+  <tr>
+    <td>{{.When.Format "2006-01-02 15:04:05"}}</td>
+    <td>{{.Target}}</td>
+    <td>{{.ShortFP}}</td>
+    <td>{{len .Findings}}</td>
+  </tr>
   {{end}}
 </table>
+<p><a href="/history">View all {{.TotalRuns}} run(s) &rarr;</a></p>
+{{end}}
+
 {{end}}
 </body>
 </html>

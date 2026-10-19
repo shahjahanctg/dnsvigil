@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 	"github.com/miekg/dns"
-	"github.com/soc-tool/internal/core/finding"
 )
 
 // queryMsg sends one query and returns the whole reply. recurse=false sets

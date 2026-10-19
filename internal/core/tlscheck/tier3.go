@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 )
 
 // signatureStrengthFindings covers FR-C13: the signature algorithm that

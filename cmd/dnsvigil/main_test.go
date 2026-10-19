@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/report"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/report"
+	"github.com/dnsvigil/dnsvigil/internal/core/settings"
 )
 
 func TestExportReportWritesPDF(t *testing.T) {
@@ -19,7 +20,7 @@ func TestExportReportWritesPDF(t *testing.T) {
 		Meta: report.Metadata{
 			Operator: "cli",
 			When:     time.Now(),
-			ToolName: "nettools",
+			ToolName: "dnsvigil",
 			Version:  "test",
 			Targets:  []string{"example.test:443"},
 		},
@@ -49,6 +50,27 @@ func TestExportReportWritesPDF(t *testing.T) {
 
 	if _, err := exportReport(in, headlessOptions{ExportFormat: "docx", ReportDir: dir}); err == nil {
 		t.Error("an unknown format must still be rejected")
+	}
+}
+
+func TestExportReportFileIsOwnerOnly(t *testing.T) {
+	// FR-A6: reports may contain sensitive findings, so the written file must
+	// not be group- or world-readable.
+	dir := t.TempDir()
+	in := report.Input{
+		Meta:     report.Metadata{Operator: "cli", When: time.Now(), ToolName: "dnsvigil", Version: "test", Targets: []string{"example.test:443"}},
+		Findings: []finding.Finding{{Kind: "tls-expiry", Severity: finding.SeverityCritical, What: "certificate expired"}},
+	}
+	path, err := exportReport(in, headlessOptions{ExportFormat: "json", ReportDir: dir})
+	if err != nil {
+		t.Fatalf("exportReport(json): %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat export: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("export permissions = %o, want no group/other bits (owner-only)", perm)
 	}
 }
 
@@ -94,6 +116,7 @@ func TestReorderHeadlessArgsMovesFlagsBeforeTargets(t *testing.T) {
 		{"bool flag after target", []string{"example.com", "--log-findings"}, []string{"--log-findings", "example.com"}},
 		{"mixed flags and two targets", []string{"a.com", "--operator", "soc", "b.com", "--enumerate"}, []string{"--operator", "soc", "--enumerate", "a.com", "b.com"}},
 		{"double dash ends flags", []string{"--operator", "soc", "--", "--weird.example"}, []string{"--operator", "soc", "--weird.example"}},
+		{"history retention takes a value after target", []string{"example.com", "--history-retention", "0"}, []string{"--history-retention", "0", "example.com"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,6 +125,28 @@ func TestReorderHeadlessArgsMovesFlagsBeforeTargets(t *testing.T) {
 				t.Errorf("reorderHeadlessArgs(%v) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSettingsDefaultsSeedHeadlessFlags(t *testing.T) {
+	// FR-S1/S2: the shared settings file supplies the headless flag defaults.
+	dir := t.TempDir()
+	t.Chdir(dir)
+	st := settings.Default()
+	st.Operator = "soc"
+	st.Timeout = settings.Duration(9 * time.Second)
+	st.ExpiryWarnDays = 12
+	st.HistoryRetention = 0 // disable pruning
+	st.Resolver = "1.1.1.1:53"
+	st.Deep = true
+	if err := settings.Save("", st); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got := settingsDefaults()
+	if got.Operator != "soc" || got.Timeout != 9*time.Second || got.ExpiryWarnDays != 12 ||
+		got.HistoryRetention != 0 || got.Resolver != "1.1.1.1:53" || !got.Deep {
+		t.Errorf("settingsDefaults = %+v, want the values from settings.json", got)
 	}
 }
 

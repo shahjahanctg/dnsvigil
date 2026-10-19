@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/target"
 	"github.com/miekg/dns"
-	"github.com/soc-tool/internal/core/finding"
-	"github.com/soc-tool/internal/core/target"
 )
 
 // Context must be compatible with the TLS context so the engine can share one struct.

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 	"github.com/miekg/dns"
-	"github.com/soc-tool/internal/core/finding"
 )
 
 // rootAnchor is IANA's published root KSK-2017 trust anchor (key tag 20326,

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 )
 
 func pdfTestInput() Input {
@@ -17,7 +17,7 @@ func pdfTestInput() Input {
 		Meta: Metadata{
 			Operator: "cli",
 			When:     time.Date(2026, 10, 19, 8, 0, 0, 0, time.UTC),
-			ToolName: "nettools",
+			ToolName: "dnsvigil",
 			Version:  "0.1.0-dev",
 			Targets:  []string{"example.com:443"},
 		},
@@ -145,7 +145,7 @@ func TestWritePDFCarriesEveryFinding(t *testing.T) {
 			t.Errorf("finding %q missing from the PDF", f.What)
 		}
 	}
-	if !strings.Contains(out, "nettools") || !strings.Contains(out, "cli") {
+	if !strings.Contains(out, "dnsvigil") || !strings.Contains(out, "cli") {
 		t.Error("run metadata (tool, operator) must appear in the PDF")
 	}
 	if strings.Contains(out, "the certificate does not cover\r") {

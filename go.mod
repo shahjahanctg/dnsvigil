@@ -1,4 +1,4 @@
-module github.com/soc-tool
+module github.com/dnsvigil/dnsvigil
 
 go 1.26.0
 

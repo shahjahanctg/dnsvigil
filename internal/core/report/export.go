@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/soc-tool/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 )
 
 // WriteJSON writes the run as one JSON object (FR-R2).

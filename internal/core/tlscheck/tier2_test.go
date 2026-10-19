@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/crypto/ocsp"
 
-	"github.com/soc-tool/internal/core/finding"
+	"github.com/dnsvigil/dnsvigil/internal/core/finding"
 )
 
 func mustTestPair(t *testing.T) (*x509.Certificate, *x509.Certificate, *rsa.PrivateKey) {
