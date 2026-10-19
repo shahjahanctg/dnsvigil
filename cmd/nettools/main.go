@@ -40,9 +40,12 @@ type headlessOptions struct {
 	CheckRevocation  bool
 	Deep             bool
 	UseDoH           bool
+	DoHProvider      string
+	WordlistPath     string
 	DiscoverWordlist bool
 	DiscoverCT       bool
 	ZoneTransfer     bool
+	Budget           time.Duration
 }
 
 func main() {
@@ -199,10 +202,13 @@ func runHeadless(args []string) {
 	fs.StringVar(&opts.AuditPath, "audit", "audit.jsonl", "audit log path")
 	fs.DurationVar(&opts.Retention, "retention", 0, "audit retention (keep entries newer than this; 0 disables) (FR-A5)")
 	fs.BoolVar(&opts.LogFindings, "log-findings", false, "record full findings in audit entries (FR-A2)")
-	fs.StringVar(&opts.ExportFormat, "export", "", "export the latest run to json|csv|md|html into --report-dir (FR-R2)")
+	fs.StringVar(&opts.ExportFormat, "export", "", "export the latest run to json|csv|md|html|pdf into --report-dir (FR-R2/R3)")
 	fs.StringVar(&opts.ReportDir, "report-dir", ".nettools/reports", "directory for exported reports and run history files (FR-R8)")
 	fs.StringVar(&opts.Resolver, "resolver", "", "custom DNS resolver for every query, e.g. 1.1.1.1:53 (FR-D12)")
 	fs.StringVar(&opts.SecondResolver, "second-resolver", "", "second resolver to compare answers against (FR-D11)")
+	fs.DurationVar(&opts.Budget, "budget", engine.DefaultBudget, "bound on the whole run per target; negative disables it (NFR-3)")
+	fs.StringVar(&opts.WordlistPath, "wordlist", "", "file of names to probe with --discover, one name or label per line (FR-D14)")
+	fs.StringVar(&opts.DoHProvider, "doh-provider", "", "DNS-over-HTTPS provider for --doh: cloudflare|google|quad9 or an https URL (FR-D13)")
 	fs.BoolVar(&opts.Enumerate, "enumerate", false, "probe offered protocols and ciphers (FR-C15/C16) and SNI names (FR-C20); more connections per target")
 	fs.BoolVar(&opts.Deep, "deep", false, "run the extra DNS checks: SRV, DKIM, TLSA, MTA-STS, TLS-RPT, reverse DNS, TTL, delegation (FR-D2/D6/D7/D8/D19/D22/D23)")
 	fs.BoolVar(&opts.UseDoH, "doh", false, "also resolve over DNS-over-HTTPS and compare (FR-D13)")
@@ -252,6 +258,8 @@ func runHeadless(args []string) {
 				Timeout:          opts.Timeout,
 				Deep:             opts.Deep,
 				UseDoH:           opts.UseDoH,
+				DoHProvider:      opts.DoHProvider,
+				WordlistPath:     opts.WordlistPath,
 				DiscoverWordlist: opts.DiscoverWordlist,
 				DiscoverCT:       opts.DiscoverCT,
 				ZoneTransfer:     opts.ZoneTransfer,
@@ -262,6 +270,7 @@ func runHeadless(args []string) {
 				Enumerate:       opts.Enumerate,
 				Timeout:         opts.Timeout,
 			},
+			Budget: opts.Budget,
 		}
 
 		res := engine.Run(ctx, tgt)
@@ -353,8 +362,10 @@ func exportReport(rin report.Input, opts headlessOptions) (string, error) {
 		ext = ".md"
 	case "html":
 		ext = ".html"
+	case "pdf":
+		ext = ".pdf"
 	default:
-		return "", fmt.Errorf("unknown export format %q (json|csv|md|html)", opts.ExportFormat)
+		return "", fmt.Errorf("unknown export format %q (json|csv|md|html|pdf)", opts.ExportFormat)
 	}
 	if err := os.MkdirAll(opts.ReportDir, 0o700); err != nil {
 		return "", err
@@ -377,6 +388,8 @@ func exportReport(rin report.Input, opts headlessOptions) (string, error) {
 		werr = report.WriteMarkdown(f, rin)
 	case "html":
 		werr = report.WriteHTML(f, rin)
+	case "pdf":
+		werr = report.WritePDF(f, rin)
 	}
 	return path, werr
 }

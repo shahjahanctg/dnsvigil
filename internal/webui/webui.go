@@ -47,6 +47,9 @@ type pageData struct {
 	Enumerate        bool
 	CheckRevocation  bool
 	UseDoH           bool
+	DoHProvider      string
+	WordlistPath     string
+	Budget           string
 	DiscoverWordlist bool
 	DiscoverCT       bool
 	ZoneTransfer     bool
@@ -117,6 +120,18 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		discoverWordlist: r.FormValue("discover") != "",
 		discoverCT:       r.FormValue("discover-ct") != "",
 		zoneTransfer:     r.FormValue("axfr") != "",
+		doHProvider:      r.FormValue("doh-provider"),
+		wordlistPath:     strings.TrimSpace(r.FormValue("wordlist")),
+	}
+	// An unusable budget is reported rather than silently ignored.
+	budgetText := strings.TrimSpace(r.FormValue("budget"))
+	if budgetText != "" {
+		parsed, err := time.ParseDuration(budgetText)
+		if err != nil {
+			s.render(w, pageData{Title: "nettools", Targets: raw, Error: "invalid budget " + budgetText + ": " + err.Error(), Budget: budgetText, WordlistPath: checks.wordlistPath, DoHProvider: checks.doHProvider})
+			return
+		}
+		checks.budget = parsed
 	}
 
 	var findings []finding.Finding
@@ -136,6 +151,8 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 			DNSContext: dnscheck.Context{
 				Deep:             checks.deep,
 				UseDoH:           checks.useDoH,
+				DoHProvider:      checks.doHProvider,
+				WordlistPath:     checks.wordlistPath,
 				DiscoverWordlist: checks.discoverWordlist,
 				DiscoverCT:       checks.discoverCT,
 				ZoneTransfer:     checks.zoneTransfer,
@@ -144,6 +161,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 				Enumerate:       checks.enumerate,
 				CheckRevocation: checks.checkRevocation,
 			},
+			Budget: checks.budget,
 		}, tgt)
 		findings = append(findings, res.Findings...)
 	}
@@ -163,10 +181,14 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		DiscoverWordlist: checks.discoverWordlist,
 		DiscoverCT:       checks.discoverCT,
 		ZoneTransfer:     checks.zoneTransfer,
+		DoHProvider:      checks.doHProvider,
+		WordlistPath:     checks.wordlistPath,
+		Budget:           budgetText,
 	})
 }
 
-// checkSwitches is the set of check toggles a form submission carries.
+// checkSwitches is the set of check toggles a form submission carries, plus
+// the values that go with them.
 type checkSwitches struct {
 	deep             bool
 	enumerate        bool
@@ -175,6 +197,9 @@ type checkSwitches struct {
 	discoverWordlist bool
 	discoverCT       bool
 	zoneTransfer     bool
+	doHProvider      string
+	wordlistPath     string
+	budget           time.Duration
 }
 
 // sortedFindings lists findings most severe first, same order as the report.

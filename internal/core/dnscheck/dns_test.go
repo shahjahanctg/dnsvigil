@@ -420,15 +420,16 @@ func TestTier2WildcardDivergenceDangling(t *testing.T) {
 		t.Errorf("dangling CNAME = %+v", d)
 	}
 
-	// FR-D3: the fixture serves DNSKEY but publishes no DS at the parent, so
-	// validation must call the zone insecure rather than validated. The
-	// validated and bogus paths are covered in tier3_test.go.
-	insecure := dnssecValidationFinding(ctx, "example.test", 2*time.Second)
-	if insecure.What != "dnssec insecure" || insecure.Severity != finding.SeverityInfo {
-		t.Errorf("dnssec validation without a DS record = %+v", insecure)
+	// FR-D3: this fixture serves no root DNSKEY, so a validator cannot start a
+	// chain and must say so instead of guessing. The validated, insecure and
+	// bogus paths are exercised against a synthetic hierarchy in
+	// dnssec_chain_test.go.
+	noRoot := dnssecChainFinding(ctx, "example.test", 2*time.Second)
+	if noRoot.Kind != "dns-dnssec" || noRoot.What != "dnssec unavailable" {
+		t.Errorf("without root data the chain must be reported unavailable: %+v", noRoot)
 	}
-	if !strings.Contains(insecure.Detail, "dnskey=") {
-		t.Errorf("dnssec detail should report what was queried: %q", insecure.Detail)
+	if noRoot.Severity != finding.SeverityLow || noRoot.Detail == "" {
+		t.Errorf("an unavailable chain must be Low with the cause recorded: %+v", noRoot)
 	}
 }
 

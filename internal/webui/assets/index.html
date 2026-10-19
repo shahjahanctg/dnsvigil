@@ -23,8 +23,22 @@
     <label><input type="checkbox" name="deep" value="1"{{if .Deep}} checked{{end}}> deep &mdash; SRV, DKIM, TLSA, MTA-STS, TLS-RPT, reverse DNS, TTL, delegation</label><br>
     <label><input type="checkbox" name="enumerate" value="1"{{if .Enumerate}} checked{{end}}> enumerate &mdash; protocols, ciphers, SNI names</label><br>
     <label><input type="checkbox" name="check-revocation" value="1"{{if .CheckRevocation}} checked{{end}}> check-revocation &mdash; OCSP and CRL</label><br>
-    <label><input type="checkbox" name="doh" value="1"{{if .UseDoH}} checked{{end}}> doh &mdash; compare DNS-over-HTTPS answers</label><br>
-    <label><input type="checkbox" name="discover" value="1"{{if .DiscoverWordlist}} checked{{end}}> discover &mdash; subdomain wordlist</label><br>
+    <label><input type="checkbox" name="doh" value="1"{{if .UseDoH}} checked{{end}}> doh &mdash; compare DNS-over-HTTPS answers</label>
+    <label>provider
+      <select name="doh-provider">
+        <option value=""{{if eq .DoHProvider ""}} selected{{end}}>default (cloudflare)</option>
+        <option value="cloudflare"{{if eq .DoHProvider "cloudflare"}} selected{{end}}>cloudflare</option>
+        <option value="google"{{if eq .DoHProvider "google"}} selected{{end}}>google</option>
+        <option value="quad9"{{if eq .DoHProvider "quad9"}} selected{{end}}>quad9</option>
+      </select>
+    </label><br>
+    <label><input type="checkbox" name="discover" value="1"{{if .DiscoverWordlist}} checked{{end}}> discover &mdash; subdomain wordlist</label>
+    <label>wordlist file (blank uses the built-in list)
+      <input type="text" name="wordlist" size="40" value="{{.WordlistPath}}">
+    </label><br>
+    <label>run budget per target (blank uses 60s, negative disables)
+      <input type="text" name="budget" size="10" value="{{.Budget}}">
+    </label><br>
     <label><input type="checkbox" name="discover-ct" value="1"{{if .DiscoverCT}} checked{{end}}> discover-ct &mdash; Certificate Transparency names</label><br>
     <label><input type="checkbox" name="axfr" value="1"{{if .ZoneTransfer}} checked{{end}}> axfr &mdash; zone transfer attempt</label>
   </fieldset>

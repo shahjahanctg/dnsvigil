@@ -40,6 +40,9 @@ type Context struct {
 	// Timeout bounds the TCP connect and the TLS handshake. Zero means
 	// DefaultDialTimeout; it is the operator's --timeout.
 	Timeout time.Duration
+	// Deadline bounds the whole check pass (NFR-2/3): once it passes, the
+	// remaining work is skipped and recorded.
+	Deadline time.Time
 	// CheckRevocation enables OCSP revocation verification (FR-C10, off by
 	// default per spec). Without it, stapling presence is still reported.
 	CheckRevocation bool
@@ -48,8 +51,27 @@ type Context struct {
 	Enumerate bool
 }
 
+// budgetExceeded reports whether the run's time budget has been spent.
+func (c Context) budgetExceeded() bool {
+	return !c.Deadline.IsZero() && time.Now().After(c.Deadline)
+}
+
+// budgetFinding records what a spent budget prevented from running.
+func budgetFinding(skipped []string) finding.Finding {
+	return finding.Finding{
+		Kind:     "tls-budget",
+		Severity: finding.SeverityLow,
+		What:     "run budget exhausted",
+		Because:  "the run reached its time budget, so the remaining checks were skipped rather than letting the run continue past the bound",
+		Detail:   "skipped=" + strings.Join(skipped, ", "),
+	}
+}
+
 // Run checks a single target's TLS certificate and returns findings.
 func Run(ctx Context, t target.Target) ([]finding.Finding, error) {
+	if ctx.budgetExceeded() {
+		return []finding.Finding{budgetFinding([]string{"all certificate checks"})}, nil
+	}
 	conn, err := dialTLS(ctx, t)
 	if err != nil {
 		if isUnreachable(err) {
@@ -143,8 +165,12 @@ func Run(ctx Context, t target.Target) ([]finding.Finding, error) {
 	}
 	f = append(f, crlFindings(ctx, leaf, issuer)...)
 
-	f = append(f, enumerationFindings(t, ctx.Enumerate)...)
-	f = append(f, sniFindings(t, ctx.Enumerate)...)
+	if ctx.budgetExceeded() {
+		f = append(f, budgetFinding([]string{"protocol/cipher enumeration", "sni probing"}))
+	} else {
+		f = append(f, enumerationFindings(t, ctx.Enumerate)...)
+		f = append(f, sniFindings(t, ctx.Enumerate)...)
+	}
 
 	return f, nil
 }

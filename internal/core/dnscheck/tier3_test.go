@@ -3,12 +3,19 @@ package dnscheck
 import (
 	"crypto"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
 	"github.com/soc-tool/internal/core/finding"
+	"github.com/soc-tool/internal/core/target"
 )
 
 // zoneFixture is a small authoritative DNS server used by the tier-3 tests.
@@ -69,6 +76,7 @@ func newZoneFixture(t *testing.T) *zoneFixture {
 
 	// Addresses, aliases and a CNAME loop.
 	add("example.test./A", &dns.A{Hdr: hdr("example.test", dns.TypeA, 300), A: net.IPv4(192, 0, 2, 10)})
+	add("alpha.example.test./A", &dns.A{Hdr: hdr("alpha.example.test", dns.TypeA, 300), A: net.IPv4(192, 0, 2, 11)})
 	add("alias.test./A", &dns.A{Hdr: hdr("alias.test", dns.TypeA, 300), A: net.IPv4(192, 0, 2, 10)})
 	add("chain.test./CNAME", &dns.CNAME{Hdr: hdr("chain.test", dns.TypeCNAME, 300), Target: "mid.test."})
 	add("mid.test./CNAME", &dns.CNAME{Hdr: hdr("mid.test", dns.TypeCNAME, 300), Target: "example.test."})
@@ -94,7 +102,7 @@ func newZoneFixture(t *testing.T) *zoneFixture {
 		Serial: 1, Refresh: 3600, Retry: 600, Expire: 604800, Minttl: 300,
 	})
 	add("example.test./NS", &dns.NS{Hdr: hdr("example.test", dns.TypeNS, 300), Ns: "ns1.example.test."})
-	add("ns1.example.test./A", &dns.A{Hdr: hdr("ns1.example.test", dns.TypeA, 300), A: net.IPv4(127, 0, 0, 2)})
+	add("ns1.example.test./A", &dns.A{Hdr: hdr("ns1.example.test", dns.TypeA, 300), A: net.IPv4(127, 0, 0, 1)})
 	// Both delegations land under the same query name so the lame check sees
 	// the whole NS set: one server refuses, the other never answers.
 	add("lame.test./NS", &dns.NS{Hdr: hdr("lame.test", dns.TypeNS, 300), Ns: "ns1.example.test."})
@@ -163,41 +171,6 @@ func newZoneFixture(t *testing.T) *zoneFixture {
 
 func (f *zoneFixture) ctx(timeout time.Duration) Context {
 	return Context{CustomResolver: f.addr, Timeout: timeout}
-}
-
-func TestDNSSECValidationValidated(t *testing.T) {
-	// FR-D3: DS digest matches the served DNSKEY and the RRSIG verifies.
-	fx := newZoneFixture(t)
-	got := dnssecValidationFinding(fx.ctx(2*time.Second), "signed.test", 2*time.Second)
-	if got.What != "dnssec validated" {
-		t.Fatalf("signed zone should validate: %+v", got)
-	}
-	if got.Severity != finding.SeverityInfo {
-		t.Errorf("validated severity = %v, want Info", got.Severity)
-	}
-	if !strings.Contains(got.Detail, "matched_keytag=") {
-		t.Errorf("validated detail should name the matched key: %q", got.Detail)
-	}
-}
-
-func TestDNSSECValidationBogusOnDigestMismatch(t *testing.T) {
-	// FR-D3: a DS that commits to a key the zone does not serve is bogus.
-	fx := newZoneFixture(t)
-	got := dnssecValidationFinding(fx.ctx(2*time.Second), "bogus.test", 2*time.Second)
-	if got.What != "dnssec bogus" || got.Severity != finding.SeverityHigh {
-		t.Fatalf("digest mismatch must be bogus High: %+v", got)
-	}
-	if !strings.Contains(got.Because, "DS") {
-		t.Errorf("bogus reason should mention the DS record: %q", got.Because)
-	}
-}
-
-func TestDNSSECValidationInsecureWithoutDS(t *testing.T) {
-	fx := newZoneFixture(t)
-	got := dnssecValidationFinding(fx.ctx(2*time.Second), "example.test", 2*time.Second)
-	if got.What != "dnssec insecure" || got.Severity != finding.SeverityInfo {
-		t.Fatalf("unsigned zone must be insecure, not bogus: %+v", got)
-	}
 }
 
 func TestCNAMECheinAndLoop(t *testing.T) {
@@ -401,6 +374,202 @@ func TestClassifyDelegationReply(t *testing.T) {
 	}
 	if got := classifyDelegationReply(nil); got != delegationLame {
 		t.Errorf("nil reply = %v, want delegationLame", got)
+	}
+}
+
+func TestLoadWordlist(t *testing.T) {
+	// Operators need their own name list (FR-D14), and a bad path must be
+	// reported rather than silently falling back to the built-in list.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "names.txt")
+	body := "# comment\nalpha\n\napi.example.test\n  beta  \n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write wordlist: %v", err)
+	}
+	got, err := loadWordlist(path)
+	if err != nil {
+		t.Fatalf("loadWordlist: %v", err)
+	}
+	want := []string{"alpha", "api.example.test", "beta"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("loadWordlist = %v, want %v (comments, blanks and padding removed)", got, want)
+	}
+
+	if _, err := loadWordlist(filepath.Join(dir, "absent.txt")); err == nil {
+		t.Error("a missing wordlist must be an error")
+	}
+	if got, err := loadWordlist(""); err != nil || got != nil {
+		t.Errorf("an empty path means the built-in list: got %v, %v", got, err)
+	}
+}
+
+func TestDiscoveryUsesWordlistFile(t *testing.T) {
+	fx := newZoneFixture(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "names.txt")
+	if err := os.WriteFile(path, []byte("alpha\nabsent\n"), 0o600); err != nil {
+		t.Fatalf("write wordlist: %v", err)
+	}
+
+	ctx := fx.ctx(2 * time.Second)
+	ctx.DiscoverWordlist = true
+	ctx.WordlistPath = path
+
+	got := discoveryFindings(ctx, "example.test", 2*time.Second)
+	if len(got) != 1 {
+		t.Fatalf("discovery findings = %+v", got)
+	}
+	if got[0].What != "subdomains=1" || !strings.Contains(got[0].Detail, "alpha.example.test") {
+		t.Errorf("wordlist file names should be probed as-is: %+v", got[0])
+	}
+	if strings.Contains(got[0].Detail, "absent.example.test") {
+		t.Errorf("a name with no record must not be reported: %+v", got[0])
+	}
+}
+
+func TestDoHEndpointSelection(t *testing.T) {
+	// FR-D13: the DoH provider is the operator's choice, and an unusable one
+	// must fail loudly instead of silently using Cloudflare.
+	cf, err := dohEndpoint("")
+	if err != nil || cf != "https://cloudflare-dns.com/dns-query" {
+		t.Errorf("default endpoint = %q, %v", cf, err)
+	}
+	cfByName, err := dohEndpoint("cloudflare")
+	if err != nil || cfByName != "https://cloudflare-dns.com/dns-query" {
+		t.Errorf("cloudflare endpoint = %q, %v", cfByName, err)
+	}
+	google, err := dohEndpoint("google")
+	if err != nil || google != "https://dns.google/resolve" {
+		t.Errorf("google endpoint = %q, %v", google, err)
+	}
+	custom, err := dohEndpoint("https://resolver.example/dns-query")
+	if err != nil || custom != "https://resolver.example/dns-query" {
+		t.Errorf("custom endpoint = %q, %v", custom, err)
+	}
+	for _, bad := range []string{"nonsense", "bogus://x"} {
+		if got, err := dohEndpoint(bad); err == nil {
+			t.Errorf("dohEndpoint(%q) = %q, want an error", bad, got)
+		}
+	}
+}
+
+func TestDoHLookupParsesJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("name"); got != "example.test" {
+			t.Errorf("query name = %q", got)
+		}
+		if !strings.Contains(r.Header.Get("Accept"), "application/dns-json") {
+			t.Errorf("Accept header = %q", r.Header.Get("Accept"))
+		}
+		_, _ = w.Write([]byte(`{"Status":0,"Answer":[{"name":"example.test.","type":1,"data":"192.0.2.7"}]}`))
+	}))
+	defer srv.Close()
+
+	ip, err := dohLookupA(srv.URL, "example.test", 2*time.Second)
+	if err != nil {
+		t.Fatalf("dohLookupA: %v", err)
+	}
+	if ip.String() != "192.0.2.7" {
+		t.Errorf("doh answer = %v, want 192.0.2.7", ip)
+	}
+}
+
+func TestCTLogRetriesRateLimit(t *testing.T) {
+	// crt.sh rate-limits aggressively; a single 429 must not lose discovery.
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) < 3 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"name_value":"a.example.test\n*.b.example.test"}]`))
+	}))
+	defer srv.Close()
+
+	names, err := ctLogQuery(srv.URL, 3, func(time.Duration) {})
+	if err != nil {
+		t.Fatalf("ctLogQuery after retries: %v", err)
+	}
+	if atomic.LoadInt32(&calls) != 3 {
+		t.Errorf("attempts = %d, want 3", calls)
+	}
+	joined := strings.Join(names, ",")
+	for _, want := range []string{"a.example.test", "b.example.test"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("names %v missing %q (wildcards are stripped)", names, want)
+		}
+	}
+}
+
+func TestCTLogFailsAfterRetries(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	if _, err := ctLogQuery(srv.URL, 3, func(time.Duration) {}); err == nil {
+		t.Fatal("a persistent rate limit must surface as an error")
+	} else if !strings.Contains(err.Error(), "429") {
+		t.Errorf("error should name the status: %v", err)
+	}
+	if atomic.LoadInt32(&calls) != 3 {
+		t.Errorf("attempts = %d, want 3", calls)
+	}
+}
+
+func TestLameDelegationAuthoritativeOffline(t *testing.T) {
+	// FR-D23's healthy branch: the fixture answers as an authority, so its
+	// nameserver must be reported as authoritative rather than lame. The
+	// delegation-port override is what makes that checkable without root.
+	fx := newZoneFixture(t)
+	_, portStr, err := net.SplitHostPort(fx.addr)
+	if err != nil {
+		t.Fatalf("fixture address: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("fixture port: %v", err)
+	}
+
+	ctx := fx.ctx(2 * time.Second)
+	ctx.DelegationPort = port
+	got := lameDelegationFinding(ctx, "example.test", 2*time.Second)
+	if got.Kind != "dns-lame-delegation" || got.Severity != finding.SeverityInfo {
+		t.Fatalf("an authoritative nameserver must not be called lame: %+v", got)
+	}
+	if got.What != "nameservers_authoritative=1" {
+		t.Errorf("authoritative count = %q", got.What)
+	}
+}
+
+func TestDNSChecksStopAtBudget(t *testing.T) {
+	// NFR-3: once the run budget is spent, the remaining checks are skipped
+	// and recorded, so a slow host cannot hold the run open.
+	fx := newZoneFixture(t)
+	ctx := fx.ctx(2 * time.Second)
+	ctx.Deep = true
+	ctx.UseDoH = true
+	ctx.Deadline = time.Now().Add(-time.Second)
+
+	res := Run(ctx, target.Target{Host: "example.test", Port: 443})
+	if len(res.Findings) != 1 {
+		t.Fatalf("a spent budget should stop the run and say so: %+v", res.Findings)
+	}
+	got := res.Findings[0]
+	if got.Kind != "dns-budget" || got.Severity != finding.SeverityLow {
+		t.Errorf("budget finding = %+v", got)
+	}
+	if !strings.Contains(got.Detail, "all dns checks") {
+		t.Errorf("budget detail should say what was skipped: %q", got.Detail)
+	}
+
+	// A budget that has not been spent must not interfere.
+	fresh := fx.ctx(2 * time.Second)
+	fresh.Deadline = time.Now().Add(time.Minute)
+	if got := Run(fresh, target.Target{Host: "example.test", Port: 443}); len(got.Findings) < 5 {
+		t.Errorf("an unspent budget must allow the normal run: %d findings", len(got.Findings))
 	}
 }
 

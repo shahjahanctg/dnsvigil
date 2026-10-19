@@ -3,9 +3,12 @@ package dnscheck
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -59,136 +62,6 @@ func lookupDO(ctx Context, name string, qtype uint16, timeout time.Duration) ([]
 		lastErr = fmt.Errorf("no answers for type %d on %s", qtype, name)
 	}
 	return nil, lastErr
-}
-
-// dnssecValidationFinding is FR-D3: rather than only reporting that DS,
-// DNSKEY and RRSIG records exist, it links them — the parent's DS digest must
-// match a DNSKEY, and that key must sign the DNSKEY set.
-func dnssecValidationFinding(ctx Context, host string, timeout time.Duration) finding.Finding {
-	// RRSIG is not a queryable type: signatures travel with the RRset they
-	// cover when the DO bit is set, so they are read out of the DNSKEY answer.
-	dsRRs, errDS := lookupDO(ctx, host, dns.TypeDS, timeout)
-	keyRRs, errKey := lookupDO(ctx, host, dns.TypeDNSKEY, timeout)
-
-	detail := fmt.Sprintf("ds=%d\ndnskey=%d\nqueries: ds=%v dnskey=%v",
-		len(dsRRs), len(keyRRs), errDS, errKey)
-
-	if len(dsRRs) == 0 {
-		return finding.Finding{
-			Kind:     "dns-dnssec",
-			Severity: finding.SeverityInfo,
-			What:     "dnssec insecure",
-			Because:  "no DS record is published for " + host + " at the parent zone, so validating resolvers treat it as unsigned",
-			Detail:   detail,
-		}
-	}
-	if len(keyRRs) == 0 {
-		return finding.Finding{
-			Kind:     "dns-dnssec",
-			Severity: finding.SeverityHigh,
-			What:     "dnssec bogus",
-			Because:  "the parent zone publishes a DS record for " + host + " but the zone serves no DNSKEY, so the delegation cannot be validated",
-			Detail:   detail,
-		}
-	}
-
-	keys := make([]*dns.DNSKEY, 0, len(keyRRs))
-	rrset := make([]dns.RR, 0, len(keyRRs))
-	sigs := make([]*dns.RRSIG, 0, 1)
-	for _, rr := range keyRRs {
-		switch v := rr.(type) {
-		case *dns.DNSKEY:
-			keys = append(keys, v)
-			rrset = append(rrset, v)
-		case *dns.RRSIG:
-			if v.TypeCovered == dns.TypeDNSKEY {
-				sigs = append(sigs, v)
-			}
-		}
-	}
-	detail = fmt.Sprintf("%s\nrrsig_over_dnskey=%d", detail, len(sigs))
-
-	var matched *dns.DNSKEY
-	for _, ds := range dsRRs {
-		d, ok := ds.(*dns.DS)
-		if !ok {
-			continue
-		}
-		for _, k := range keys {
-			if !strings.EqualFold(k.Header().Name, d.Header().Name) {
-				continue
-			}
-			if computed := k.ToDS(d.DigestType); computed != nil && strings.EqualFold(computed.Digest, d.Digest) {
-				matched = k
-				break
-			}
-		}
-		if matched != nil {
-			break
-		}
-	}
-	if matched == nil {
-		return finding.Finding{
-			Kind:     "dns-dnssec",
-			Severity: finding.SeverityHigh,
-			What:     "dnssec bogus",
-			Because:  "no DNSKEY served by " + host + " produces the digest published in the parent's DS record, so the delegation does not chain up",
-			Detail:   detail,
-		}
-	}
-
-	if len(sigs) == 0 {
-		return finding.Finding{
-			Kind:     "dns-dnssec",
-			Severity: finding.SeverityMedium,
-			What:     "dnssec unvalidated",
-			Because:  "the DS digest matches a served DNSKEY, but no RRSIG covering the DNSKEY set came back, so the key set's authenticity is not proven",
-			Detail:   detail,
-		}
-	}
-
-	// The DNSKEY set is usually signed by the key-signing key the DS record
-	// commits to; any served key whose key tag matches the signature is
-	// acceptable evidence that the set is intact.
-	byTag := map[uint16]*dns.DNSKEY{}
-	for _, k := range keys {
-		byTag[k.KeyTag()] = k
-	}
-	var verifyErr error
-	verified := false
-	for _, sig := range sigs {
-		candidate := byTag[sig.KeyTag]
-		if candidate == nil {
-			continue
-		}
-		if err := sig.Verify(candidate, rrset); err != nil {
-			verifyErr = err
-			continue
-		}
-		verified = true
-		break
-	}
-	if !verified {
-		detailErr := ""
-		if verifyErr != nil {
-			detailErr = "\nverify_error=" + verifyErr.Error()
-		}
-		return finding.Finding{
-			Kind:     "dns-dnssec",
-			Severity: finding.SeverityHigh,
-			What:     "dnssec bogus",
-			Because:  "no RRSIG over the DNSKEY set verifies against a served key, so the key material cannot be trusted",
-			Detail:   detail + detailErr,
-		}
-	}
-
-	return finding.Finding{
-		Kind:     "dns-dnssec",
-		Severity: finding.SeverityInfo,
-		What:     "dnssec validated",
-		Because:  "the parent's DS digest matches a served DNSKEY and that key signs the DNSKEY set, so the delegation validates one level; a full path to the root trust anchor is not built here",
-		Detail:   detail + fmt.Sprintf("\nmatched_keytag=%d\nds_algorithm=%d", matched.KeyTag(), matched.Algorithm),
-	}
 }
 
 // srvPrefixes are the service locations most worth reporting (FR-D2).
@@ -642,7 +515,11 @@ func classifyDelegationReply(in *dns.Msg) delegationVerdict {
 func queryMsgTo(ctx Context, server, name string, qtype uint16, timeout time.Duration) (*dns.Msg, error) {
 	addr := server
 	if _, _, err := net.SplitHostPort(server); err != nil {
-		addr = net.JoinHostPort(server, "53")
+		port := ctx.DelegationPort
+		if port == 0 {
+			port = 53
+		}
+		addr = net.JoinHostPort(server, strconv.Itoa(port))
 	}
 	c := &dns.Client{Timeout: timeout}
 	msg := new(dns.Msg)
@@ -655,20 +532,63 @@ func queryMsgTo(ctx Context, server, name string, qtype uint16, timeout time.Dur
 	return in, nil
 }
 
+// dohProviders maps the operator's choice to an RFC 8484 JSON endpoint.
+var dohProviders = map[string]string{
+	"cloudflare": "https://cloudflare-dns.com/dns-query",
+	"google":     "https://dns.google/resolve",
+	"quad9":      "https://dns.quad9.net:5053/dns-query",
+}
+
+// dohEndpoint resolves the DoH provider selection (FR-D13). An empty value is
+// the default; an https URL is used as given; anything else is an error, so a
+// typo cannot silently fall back to a provider the operator did not choose.
+func dohEndpoint(provider string) (string, error) {
+	p := strings.TrimSpace(strings.ToLower(provider))
+	if p == "" {
+		return dohProviders["cloudflare"], nil
+	}
+	if url, ok := dohProviders[p]; ok {
+		return url, nil
+	}
+	if strings.HasPrefix(p, "https://") {
+		return provider, nil
+	}
+	return "", fmt.Errorf("%q is not a known provider (%s) or an https URL", provider, strings.Join(dohProviderNames(), ", "))
+}
+
+func dohProviderNames() []string {
+	names := make([]string, 0, len(dohProviders))
+	for name := range dohProviders {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // dohFinding is FR-D13: resolve over DNS-over-HTTPS and compare with the
 // resolver used for the rest of the run.
 func dohFinding(ctx Context, host string, timeout time.Duration) []finding.Finding {
 	if !ctx.UseDoH {
 		return nil
 	}
-	dohIP, err := dohLookupA(host, timeout)
+	endpoint, err := dohEndpoint(ctx.DoHProvider)
+	if err != nil {
+		return []finding.Finding{{
+			Kind:     "dns-doh",
+			Severity: finding.SeverityLow,
+			What:     "doh provider unusable",
+			Because:  "the configured DNS-over-HTTPS provider could not be resolved to an endpoint, so no comparison was made",
+			Detail:   err.Error(),
+		}}
+	}
+	dohIP, err := dohLookupA(endpoint, host, timeout)
 	if err != nil {
 		return []finding.Finding{{
 			Kind:     "dns-doh",
 			Severity: finding.SeverityLow,
 			What:     "doh query failed",
 			Because:  "the DNS-over-HTTPS lookup did not return an answer, so no comparison was possible",
-			Detail:   err.Error(),
+			Detail:   err.Error() + "\ndoh=" + endpoint,
 		}}
 	}
 	udpIP, err := LookupA(ctx, host, timeout)
@@ -678,7 +598,7 @@ func dohFinding(ctx Context, host string, timeout time.Duration) []finding.Findi
 			Severity: finding.SeverityInfo,
 			What:     "doh_a=" + dohIP.String(),
 			Because:  "resolved over DNS-over-HTTPS; the local resolver returned no A record to compare against",
-			Detail:   "doh=https://cloudflare-dns.com/dns-query",
+			Detail:   "doh=" + endpoint,
 		}}
 	}
 	if !dohIP.Equal(udpIP) {
@@ -688,7 +608,7 @@ func dohFinding(ctx Context, host string, timeout time.Duration) []finding.Findi
 			What:     "doh divergence",
 			Because: fmt.Sprintf("DNS-over-HTTPS answered %s while the configured resolver answered %s for %s",
 				dohIP, udpIP, host),
-			Detail: "doh=https://cloudflare-dns.com/dns-query",
+			Detail: "doh=" + endpoint,
 		}}
 	}
 	return []finding.Finding{{
@@ -696,15 +616,19 @@ func dohFinding(ctx Context, host string, timeout time.Duration) []finding.Findi
 		Severity: finding.SeverityInfo,
 		What:     "doh_a=" + dohIP.String(),
 		Because:  "DNS-over-HTTPS and the configured resolver agree on the A record",
-		Detail:   "doh=https://cloudflare-dns.com/dns-query",
+		Detail:   "doh=" + endpoint,
 	}}
 }
 
-// dohLookupA performs an RFC 8484 JSON DNS-over-HTTPS query.
-func dohLookupA(host string, timeout time.Duration) (net.IP, error) {
+// dohLookupA performs an RFC 8484 JSON DNS-over-HTTPS query against endpoint.
+func dohLookupA(endpoint, host string, timeout time.Duration) (net.IP, error) {
 	client := &http.Client{Timeout: maxDuration(timeout, 3*time.Second)}
+	sep := "?"
+	if strings.Contains(endpoint, "?") {
+		sep = "&"
+	}
 	req, err := http.NewRequest(http.MethodGet,
-		"https://cloudflare-dns.com/dns-query?name="+host+"&type=A", nil)
+		endpoint+sep+"name="+host+"&type=A", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -754,6 +678,31 @@ var discoveryWordlist = []string{
 	"media", "images", "db", "sql", "backup", "intranet", "internal",
 }
 
+// loadWordlist reads an operator-supplied name list (FR-D14): one name or
+// label per line, with blank lines and # comments ignored. An empty path means
+// "use the built-in list".
+func loadWordlist(path string) ([]string, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		names = append(names, line)
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("wordlist %s contains no names", path)
+	}
+	return names, nil
+}
+
 // discoveryFindings is FR-D14/FR-D15: names found from a wordlist and, when
 // enabled, from Certificate Transparency logs. Only names under the
 // operator-supplied domain are queried (FR-S8).
@@ -765,11 +714,30 @@ func discoveryFindings(ctx Context, host string, timeout time.Duration) []findin
 	var mu sync.Mutex
 
 	if ctx.DiscoverWordlist {
+		labels := discoveryWordlist
+		if ctx.WordlistPath != "" {
+			loaded, err := loadWordlist(ctx.WordlistPath)
+			if err != nil {
+				return []finding.Finding{{
+					Kind:     "dns-subdomain",
+					Severity: finding.SeverityLow,
+					What:     "wordlist unreadable",
+					Because:  "the operator-supplied wordlist could not be read, so no names were probed from it",
+					Detail:   err.Error(),
+				}}
+			}
+			labels = loaded
+		}
 		workers := 8
 		sem := make(chan struct{}, workers)
 		var wg sync.WaitGroup
-		for _, label := range discoveryWordlist {
-			name := label + "." + host
+		for _, label := range labels {
+			// A line containing a dot is a complete name; otherwise it is a
+			// label under the target domain.
+			name := label
+			if !strings.Contains(label, ".") {
+				name = label + "." + host
+			}
 			wg.Add(1)
 			sem <- struct{}{}
 			go func(name string) {
@@ -848,20 +816,59 @@ func discoverySources(ctx Context) []string {
 // ctLogNames asks crt.sh for names that appear in Certificate Transparency
 // logs for a domain (FR-D15).
 func ctLogNames(host string) ([]string, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
 	url := "https://crt.sh/?q=%25." + host + "&output=json"
-	res, err := client.Get(url)
-	if err != nil {
-		return nil, err
+	return ctLogQuery(url, ctLogAttempts, time.Sleep)
+}
+
+// ctLogAttempts is how many times a rate-limited CT query is retried.
+const ctLogAttempts = 3
+
+// ctLogQuery fetches and parses a CT-log JSON response, retrying when the log
+// rate-limits us. crt.sh answers 429 readily, and losing discovery to one
+// throttled request would report an empty result that is not true. The sleep
+// function is injected so tests can run without waiting.
+func ctLogQuery(url string, attempts int, sleep func(time.Duration)) ([]string, error) {
+	if attempts < 1 {
+		attempts = 1
 	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("crt.sh returned status %d", res.StatusCode)
+	client := &http.Client{Timeout: 20 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			sleep(time.Duration(1<<uint(attempt-1)) * time.Second)
+		}
+		res, err := client.Get(url)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if res.StatusCode != http.StatusOK {
+			retryable := res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= 500
+			lastErr = fmt.Errorf("ct log returned status %d", res.StatusCode)
+			res.Body.Close()
+			if retryable {
+				continue
+			}
+			return nil, lastErr
+		}
+		names, err := parseCTNames(res.Body)
+		res.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return names, nil
 	}
+	return nil, lastErr
+}
+
+// parseCTNames extracts the unique names from a crt.sh JSON response,
+// stripping wildcard prefixes.
+func parseCTNames(body io.Reader) ([]string, error) {
 	var entries []struct {
 		NameValue string `json:"name_value"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&entries); err != nil {
+	if err := json.NewDecoder(body).Decode(&entries); err != nil {
 		return nil, err
 	}
 	unique := map[string]bool{}

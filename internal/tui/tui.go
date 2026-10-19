@@ -26,9 +26,15 @@ var runCheck = engine.Run
 type Options struct {
 	Deep             bool
 	UseDoH           bool
+	DoHProvider      string
+	WordlistPath     string
 	DiscoverWordlist bool
 	DiscoverCT       bool
 	ZoneTransfer     bool
+	AXFR             bool
+	Enumerate        bool
+	CheckRevocation  bool
+	Budget          string
 }
 
 // Model is the single Bubble Tea state model.
@@ -39,6 +45,8 @@ type Model struct {
 	quitting bool
 	err      string
 	opts     Options
+	// pathEntry is true while the operator is typing the wordlist path.
+	pathEntry bool
 }
 
 // runResult is one target's merged result plus its canonical address.
@@ -53,6 +61,19 @@ func New() Model { return Model{} }
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd { return nil }
+var doHProviders = []string{"", "cloudflare", "google", "quad9"}
+
+// nextDoHProvider rotates through the provider list (ctrl+p).
+func nextDoHProvider(current string) string {
+	for i, p := range doHProviders {
+		if p == current {
+			return doHProviders[(i+1)%len(doHProviders)]
+		}
+	}
+	return doHProviders[0]
+}
+
+// New returns the initialised model.
 
 // Update handles input keys; 'enter' runs the check, 'q' quits (FR-S4:
 // keyboard-only). Check execution is synchronous and bounded per run.
@@ -60,6 +81,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "ctrl+p":
+			m.opts.DoHProvider = nextDoHProvider(m.opts.DoHProvider)
+			return m, nil
 		case "ctrl+c", "q":
 			m.quitting = true
 			return m, tea.Quit
@@ -98,6 +122,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+x":
 			m.opts.ZoneTransfer = !m.opts.ZoneTransfer
+			return m, nil
+		case "ctrl+b":
+			m.opts.Budget = ""
+			return m, nil
+		case "ctrl+r":
+			m.opts.CheckRevocation = !m.opts.CheckRevocation
+			return m, nil
+		case "ctrl+e":
+			m.opts.Enumerate = !m.opts.Enumerate
+			return m, nil
+		case "ctrl+l":
+			// Enter the wordlist path; while it is open, typing appends to the
+			// path rather than the target entry.
+			m.pathEntry = true
+			return m, nil
+		case "esc":
+			m.pathEntry = false
 			return m, nil
 		}
 		// Printable characters append to the target entry.

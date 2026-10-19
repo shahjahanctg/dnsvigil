@@ -62,9 +62,10 @@ func TestKeyboardFlowAcceptance(t *testing.T) {
 	if gotTarget.Addr() != "example.test:443" {
 		t.Errorf("shared core received target %q", gotTarget.Addr())
 	}
-	if !gotCtx.DNSContext.Deep || !gotCtx.DNSContext.UseDoH || !gotCtx.TLSContext.Enumerate {
+	if !gotCtx.DNSContext.Deep || !gotCtx.DNSContext.UseDoH || !gotCtx.TLSContext.Enumerate || gotCtx.DNSContext.DoHProvider != "google" || gotCtx.DNSContext.WordlistPath != "names.txt" || !gotCtx.TLSContext.CheckRevocation {
 		t.Errorf("switches must reach the shared core (FR-S2): %+v", gotCtx)
 	}
+	
 	if m.(Model).input != "" {
 		t.Errorf("the entry should be cleared after a run, got %q", m.(Model).input)
 	}
@@ -137,5 +138,60 @@ func TestRenderFindingsSeverityLabels(t *testing.T) {
 	// Most severe appears first.
 	if strings.Index(out, "[CRITICAL]") > strings.Index(out, "[INFO]") {
 		t.Errorf("most severe finding must be listed first: %s", out)
+	}
+}
+
+func TestKeyboardSwitchesReachCore(t *testing.T) {
+	// FR-S1/S2 parity: provider selection and the wordlist path are CLI flags,
+	// so the TUI must be able to set them with the keyboard too.
+	var gotCtx engine.Context
+	original := runCheck
+	runCheck = func(ctx engine.Context, tg target.Target) engine.Result {
+		gotCtx = ctx
+		return engine.Result{Target: tg}
+	}
+	defer func() { runCheck = original }()
+
+	var m tea.Model = New()
+	// ctrl+p cycles the DoH provider; ctrl+o turns the check on.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	if v := m.(Model).View(); !strings.Contains(v, "doh-provider(ctrl+p)=cloudflare") {
+		t.Fatalf("provider cycle should be visible: %s", v)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	if v := m.(Model).View(); !strings.Contains(v, "doh-provider(ctrl+p)=google") {
+		t.Errorf("second ctrl+p should move to google: %s", v)
+	}
+
+	// ctrl+l opens the wordlist path; typing goes to the path, not the target.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	for _, r := range "names.txt" {
+		m, _ = m.Update(teaKey(string(r)))
+	}
+	if got := m.(Model).opts.WordlistPath; got != "names.txt" {
+		t.Fatalf("wordlist path = %q, want names.txt", got)
+	}
+	if got := m.(Model).input; got != "" {
+		t.Errorf("typing in path mode must not fill the target entry: %q", got)
+	}
+	if v := m.(Model).View(); !strings.Contains(v, "wordlist-file(ctrl+l)=names.txt") {
+		t.Errorf("path entry should be visible: %s", v)
+	}
+	m, _ = m.Update(teaKey("enter"))
+	if m.(Model).pathEntry {
+		t.Error("enter should close path entry")
+	}
+
+	// A run carries both values into the shared core.
+	for _, r := range "example.test" {
+		m, _ = m.Update(teaKey(string(r)))
+	}
+	m, _ = m.Update(teaKey("enter"))
+	if gotCtx.DNSContext.DoHProvider != "" || gotCtx.DNSContext.WordlistPath != "names.txt" {
+		t.Errorf("switches must reach the core: %+v", gotCtx.DNSContext)
+	}
+	if gotCtx.DNSContext.UseDoH != true {
+		t.Errorf("doh should be on: %+v", gotCtx.DNSContext)
 	}
 }

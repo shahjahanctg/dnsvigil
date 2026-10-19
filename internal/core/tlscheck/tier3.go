@@ -350,39 +350,55 @@ func crlFindings(ctx Context, leaf, issuer *x509.Certificate) []finding.Finding 
 			Because:  "the certificate does not advertise a CRL distribution point, so revocation can only be answered by OCSP",
 		}}
 	}
-	var notes []string
+	// Every advertised endpoint is read, because a clean list on one endpoint
+	// must not hide a revocation published on another.
+	var unreadable, clean []string
 	for _, url := range leaf.CRLDistributionPoints {
 		list, err := fetchCRL(url)
 		if err != nil {
-			notes = append(notes, fmt.Sprintf("%s: %v", url, err))
+			unreadable = append(unreadable, fmt.Sprintf("%s: %v", url, err))
 			continue
 		}
 		if issuer != nil {
 			if err := list.CheckSignatureFrom(issuer); err != nil {
-				notes = append(notes, fmt.Sprintf("%s: crl signature not verifiable from the served issuer (%v)", url, err))
+				unreadable = append(unreadable, fmt.Sprintf("%s: crl signature not verifiable from the served issuer (%v)", url, err))
 				continue
 			}
 		}
 		for _, entry := range list.RevokedCertificateEntries {
 			if entry.SerialNumber.Cmp(leaf.SerialNumber) == 0 {
+				detail := fmt.Sprintf("crl=%s\nserial=%s\nrevoked_at=%s",
+					url, leaf.SerialNumber.String(), entry.RevocationTime.Format(time.RFC3339))
+				if len(unreadable) > 0 {
+					detail += "\nunreadable:\n" + strings.Join(unreadable, "\n")
+				}
 				return []finding.Finding{{
 					Kind:     "tls-crl",
 					Severity: finding.SeverityCritical,
 					What:     "revoked",
 					Because: fmt.Sprintf("the CRL at %s lists this certificate's serial number as revoked (%s)",
 						url, entry.RevocationTime.Format(time.RFC3339)),
-					Detail: fmt.Sprintf("crl=%s\nserial=%s\nrevoked_at=%s",
-						url, leaf.SerialNumber.String(), entry.RevocationTime.Format(time.RFC3339)),
+					Detail: detail,
 				}}
 			}
+		}
+		clean = append(clean, fmt.Sprintf("crl=%s\nserial=%s\nnext_update=%s",
+			url, leaf.SerialNumber.String(), list.NextUpdate.Format(time.RFC3339)))
+	}
+
+	if len(clean) > 0 {
+		detail := strings.Join(clean, "\n")
+		because := "no advertised CRL distribution point lists this certificate's serial number"
+		if len(unreadable) > 0 {
+			detail += "\nunreadable:\n" + strings.Join(unreadable, "\n")
+			because = "the readable CRL distribution point(s) do not list this certificate's serial number; the rest could not be read, which the detail records"
 		}
 		return []finding.Finding{{
 			Kind:     "tls-crl",
 			Severity: finding.SeverityInfo,
 			What:     "crl good",
-			Because:  fmt.Sprintf("the CRL at %s does not list this certificate's serial number", url),
-			Detail: fmt.Sprintf("crl=%s\nserial=%s\nnext_update=%s",
-				url, leaf.SerialNumber.String(), list.NextUpdate.Format(time.RFC3339)),
+			Because:  because,
+			Detail:   detail,
 		}}
 	}
 	return []finding.Finding{{
@@ -390,7 +406,7 @@ func crlFindings(ctx Context, leaf, issuer *x509.Certificate) []finding.Finding 
 		Severity: finding.SeverityLow,
 		What:     "crl unreachable",
 		Because:  "no advertised CRL distribution point could be read, so revocation status is unknown from CRLs",
-		Detail:   strings.Join(notes, "\n"),
+		Detail:   strings.Join(unreadable, "\n"),
 	}}
 }
 

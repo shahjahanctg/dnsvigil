@@ -1,9 +1,56 @@
 package main
 
 import (
+	"bytes"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/soc-tool/internal/core/finding"
+	"github.com/soc-tool/internal/core/report"
 )
+
+func TestExportReportWritesPDF(t *testing.T) {
+	// FR-R3: PDF is the last export format in the tiering, and it must be a
+	// real PDF file on disk, not a renamed text file.
+	dir := t.TempDir()
+	in := report.Input{
+		Meta: report.Metadata{
+			Operator: "cli",
+			When:     time.Now(),
+			ToolName: "nettools",
+			Version:  "test",
+			Targets:  []string{"example.test:443"},
+		},
+		Findings: []finding.Finding{{
+			Kind: "dns-a", Severity: finding.SeverityInfo,
+			What: "a=192.0.2.10", Because: "an A record exists for example.test",
+		}},
+	}
+
+	path, err := exportReport(in, headlessOptions{ExportFormat: "pdf", ReportDir: dir})
+	if err != nil {
+		t.Fatalf("exportReport(pdf): %v", err)
+	}
+	if !strings.HasSuffix(path, ".pdf") {
+		t.Errorf("exported path = %q, want a .pdf suffix", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read export: %v", err)
+	}
+	if !bytes.HasPrefix(data, []byte("%PDF-1.4")) {
+		t.Errorf("export is not a PDF: %q", string(data[:min(16, len(data))]))
+	}
+	if !bytes.Contains(data, []byte("a=192.0.2.10")) {
+		t.Error("the PDF must contain the finding")
+	}
+
+	if _, err := exportReport(in, headlessOptions{ExportFormat: "docx", ReportDir: dir}); err == nil {
+		t.Error("an unknown format must still be rejected")
+	}
+}
 
 func TestNormalizeResolver(t *testing.T) {
 	ok := []struct{ in, want string }{

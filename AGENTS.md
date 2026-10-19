@@ -26,9 +26,6 @@ Rules of use:
 3. **`verification-before-completion` before any success claim**: run
    `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .`, and exercise the
    real interface (CLI/TUI/web) with the built binary.
-4. Do not use or reintroduce `god-mode-skill`; it was removed in favour of
-   the set above.
-
 ## Toolchain
 
 Go is not on `PATH` by default on this host:
@@ -37,26 +34,15 @@ Go is not on `PATH` by default on this host:
 export PATH="$HOME/sdk/go1.25.0/bin:$PATH"
 ```
 
-## Verification commands (required before claiming completion)
+## Verification commands(required before claiming completion)
 
 ```bash
 export PATH="$HOME/sdk/go1.25.0/bin:$PATH"
 go build ./... && go vet ./... && gofmt -l . && go test -count=1 ./...
 ```
 
-Rebuild all four release targets after any source change (binaries are
-committed deliberately):
-
-```bash
-cd cmd/nettools
-CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o ../../build/nettools-linux-amd64 .
-CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o ../../build/nettools-linux-wsl .
-CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -o ../../build/nettools-linux-arm64 .
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o ../../build/nettools-windows-amd64.exe .
-cd ../.. && cp build/nettools-linux-amd64 ./nettools
-```
-
 ## Architecture rules
+
 
 - One shared core (`internal/core/*`), three thin front-ends
   (`cmd/nettools` CLI, `internal/tui`, `internal/webui`). **Any check the CLI

@@ -28,13 +28,42 @@ type Context struct {
 	Deep bool
 	// UseDoH resolves the target over DNS-over-HTTPS and compares (FR-D13).
 	UseDoH bool
-	// DiscoverWordlist probes a built-in name list (FR-D14).
+	// DiscoverWordlist probes a name list (FR-D14): the built-in one, or the
+	// operator's file when WordlistPath is set.
 	DiscoverWordlist bool
+	// WordlistPath is an operator-supplied name list, one name or label per
+	// line ("#" comments ignored).
+	WordlistPath string
 	// DiscoverCT asks Certificate Transparency logs for names (FR-D15).
 	DiscoverCT bool
+	// DoHProvider selects the DNS-over-HTTPS endpoint: a known provider name
+	// or an https URL. Empty means the default provider.
+	DoHProvider string
 	// ZoneTransfer attempts an AXFR against each authoritative server
 	// (FR-D16); off by default because it is an intrusive query.
 	ZoneTransfer bool
+	// DelegationPort overrides the port used for delegation probes; zero
+	// means 53. Tests use it to probe a fixture instead of a real server.
+	DelegationPort int
+	// Deadline bounds the whole run (NFR-2/3): once it passes, the remaining
+	// checks are skipped and recorded instead of being allowed to continue.
+	Deadline time.Time
+}
+
+// budgetExceeded reports whether the run's time budget has been spent.
+func (ctx Context) budgetExceeded() bool {
+	return !ctx.Deadline.IsZero() && time.Now().After(ctx.Deadline)
+}
+
+// budgetFinding records the checks a spent budget prevented from running.
+func budgetFinding(skipped []string) finding.Finding {
+	return finding.Finding{
+		Kind:     "dns-budget",
+		Severity: finding.SeverityLow,
+		What:     "run budget exhausted",
+		Because:  "the run reached its time budget, so the remaining checks were skipped rather than letting the run continue past the bound",
+		Detail:   "skipped=" + strings.Join(skipped, ", "),
+	}
 }
 
 // Result is the full DNS check result for one target.
@@ -57,6 +86,12 @@ func Run(ctx Context, t target.Target) Result {
 		timeout = 5 * time.Second
 	}
 	var f []finding.Finding
+
+	// A spent budget stops everything: the point of the bound is that an
+	// unresponsive host cannot hold the run open (NFR-3).
+	if ctx.budgetExceeded() {
+		return Result{Target: t, Findings: []finding.Finding{budgetFinding([]string{"all dns checks"})}}
+	}
 
 	// A
 	if ip, err := LookupA(ctx, t.Host, timeout); err == nil {
@@ -123,7 +158,7 @@ func Run(ctx Context, t target.Target) Result {
 	// Tier 2: DNSSEC validation (FR-D3), CNAME chain/loop (FR-D21),
 	// dangling CNAME (FR-D9), wildcard (FR-D10), resolver divergence
 	// (FR-D11 when a second resolver is set).
-	f = append(f, dnssecValidationFinding(ctx, t.Host, timeout))
+	f = append(f, dnssecChainFinding(ctx, t.Host, timeout))
 	if d := cnameChainFinding(ctx, t.Host, timeout); d.Kind != "" {
 		f = append(f, d)
 	}
@@ -138,21 +173,40 @@ func Run(ctx Context, t target.Target) Result {
 	// Tier 2/3 opt-ins: the multi-query checks (FR-D2/D6/D7/D8/D19/D22/D23)
 	// and the network-reaching checks (FR-D13/D14/D15/D16) only run when the
 	// operator asked for them, so a default run stays short.
+	var skipped []string
 	if ctx.Deep {
-		f = append(f, srvFindings(ctx, t.Host, timeout)...)
-		f = append(f, ptrFindings(ctx, t.Host, timeout)...)
-		f = append(f, mtaStsFinding(ctx, t.Host, timeout))
-		f = append(f, tlsRptFinding(ctx, t.Host, timeout))
-		f = append(f, tlsaFindings(ctx, t.Host, t.Port, timeout)...)
-		f = append(f, dkimFinding(ctx, t.Host, timeout))
-		f = append(f, ttlFinding(ctx, t.Host, timeout))
-		if d := lameDelegationFinding(ctx, t.Host, timeout); d.Kind != "" {
-			f = append(f, d)
+		if ctx.budgetExceeded() {
+			skipped = append(skipped, "deep checks (srv, dkim, tlsa, mta-sts, tls-rpt, ptr, ttl, delegation)")
+		} else {
+			f = append(f, srvFindings(ctx, t.Host, timeout)...)
+			f = append(f, ptrFindings(ctx, t.Host, timeout)...)
+			f = append(f, mtaStsFinding(ctx, t.Host, timeout))
+			f = append(f, tlsRptFinding(ctx, t.Host, timeout))
+			f = append(f, tlsaFindings(ctx, t.Host, t.Port, timeout)...)
+			f = append(f, dkimFinding(ctx, t.Host, timeout))
+			f = append(f, ttlFinding(ctx, t.Host, timeout))
+			if d := lameDelegationFinding(ctx, t.Host, timeout); d.Kind != "" {
+				f = append(f, d)
+			}
 		}
 	}
-	f = append(f, dohFinding(ctx, t.Host, timeout)...)
-	f = append(f, discoveryFindings(ctx, t.Host, timeout)...)
-	f = append(f, zoneTransferFindings(ctx, t.Host, timeout)...)
+	for _, group := range []struct {
+		name string
+		run  func()
+	}{
+		{"doh", func() { f = append(f, dohFinding(ctx, t.Host, timeout)...) }},
+		{"discovery", func() { f = append(f, discoveryFindings(ctx, t.Host, timeout)...) }},
+		{"zone transfer", func() { f = append(f, zoneTransferFindings(ctx, t.Host, timeout)...) }},
+	} {
+		if ctx.budgetExceeded() {
+			skipped = append(skipped, group.name)
+			continue
+		}
+		group.run()
+	}
+	if len(skipped) > 0 {
+		f = append(f, budgetFinding(skipped))
+	}
 
 	return Result{Target: t, Findings: f}
 }

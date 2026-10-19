@@ -251,11 +251,108 @@ func TestCRLRevocationDetection(t *testing.T) {
 	}
 }
 
+func TestCRLRevocationWinsOverACleanEndpoint(t *testing.T) {
+	// FR-C10: a certificate can advertise several CRL distribution points. A
+	// clean list must not end the search while another endpoint revokes the
+	// certificate.
+	leaf, ca, caKey := crlTestChain(t)
+
+	serve := func(revoke bool) *httptest.Server {
+		var entries []x509.RevocationListEntry
+		if revoke {
+			entries = append(entries, x509.RevocationListEntry{
+				SerialNumber:   leaf.SerialNumber,
+				RevocationTime: time.Now().Add(-time.Hour),
+				ReasonCode:     4,
+			})
+		}
+		der, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{
+			Number:                    big.NewInt(31),
+			ThisUpdate:                time.Now().Add(-time.Hour),
+			NextUpdate:                time.Now().Add(time.Hour),
+			RevokedCertificateEntries: entries,
+		}, ca, caKey)
+		if err != nil {
+			t.Fatalf("create crl: %v", err)
+		}
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write(der)
+		}))
+	}
+
+	clean := serve(false)
+	defer clean.Close()
+	revoking := serve(true)
+	defer revoking.Close()
+
+	withBoth := leaf
+	withBoth.CRLDistributionPoints = []string{clean.URL, revoking.URL}
+	got := crlFindings(Context{CheckRevocation: true}, withBoth, ca)
+	if len(got) != 1 || got[0].What != "revoked" || got[0].Severity != finding.SeverityCritical {
+		t.Fatalf("a revoking endpoint must win over a clean one: %+v", got)
+	}
+}
+
+func TestCRLTolerantOfUnreadableEndpoint(t *testing.T) {
+	// A broken endpoint (HTML error page) must not hide a readable one, and
+	// the unreadable endpoint must be named when nothing can be read.
+	leaf, ca, caKey := crlTestChain(t)
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html>not a crl</html>"))
+	}))
+	defer broken.Close()
+
+	der, err := x509.CreateRevocationList(rand.Reader, &x509.RevocationList{
+		Number:     big.NewInt(41),
+		ThisUpdate: time.Now().Add(-time.Hour),
+		NextUpdate: time.Now().Add(time.Hour),
+	}, ca, caKey)
+	if err != nil {
+		t.Fatalf("create crl: %v", err)
+	}
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(der)
+	}))
+	defer good.Close()
+
+	withBoth := leaf
+	withBoth.CRLDistributionPoints = []string{broken.URL, good.URL}
+	got := crlFindings(Context{CheckRevocation: true}, withBoth, ca)
+	if len(got) != 1 || got[0].What != "crl good" {
+		t.Fatalf("a readable endpoint should be used when another is unreadable: %+v", got)
+	}
+	if !strings.Contains(got[0].Detail, broken.URL) {
+		t.Errorf("the unreadable endpoint should stay in the evidence: %q", got[0].Detail)
+	}
+
+	onlyBroken := leaf
+	onlyBroken.CRLDistributionPoints = []string{broken.URL}
+	unreadable := crlFindings(Context{CheckRevocation: true}, onlyBroken, ca)
+	if unreadable[0].What != "crl unreachable" || !strings.Contains(unreadable[0].Detail, broken.URL) {
+		t.Errorf("with no readable endpoint the unreadable one must be named: %+v", unreadable[0])
+	}
+}
+
 func TestCRLUnreachableIsLow(t *testing.T) {
 	leaf, ca, _ := crlTestChain(t)
 	leaf.CRLDistributionPoints = []string{"http://127.0.0.1:1/revoked.crl"}
 	got := crlFindings(Context{CheckRevocation: true}, leaf, ca)
 	if len(got) != 1 || got[0].Severity != finding.SeverityLow || got[0].What != "crl unreachable" {
 		t.Errorf("unreachable CRL must be Low and honest about it: %+v", got)
+	}
+}
+
+func TestTLSChecksStopAtBudget(t *testing.T) {
+	// NFR-3: a spent budget must stop the pass without dialing, so a slow
+	// target cannot hold the run open.
+	fs, err := Run(Context{Deadline: time.Now().Add(-time.Second)}, targetFor(t, "127.0.0.1:1"))
+	if err != nil {
+		t.Fatalf("Run with a spent budget returned an error: %v", err)
+	}
+	if len(fs) != 1 || fs[0].Kind != "tls-budget" {
+		t.Fatalf("budget finding = %+v", fs)
+	}
+	if fs[0].Severity != finding.SeverityLow || !strings.Contains(fs[0].Detail, "skipped=") {
+		t.Errorf("budget finding should be Low and name the skipped work: %+v", fs[0])
 	}
 }
