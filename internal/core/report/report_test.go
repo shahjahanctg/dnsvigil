@@ -114,6 +114,18 @@ func TestWriteTextRequiresToolName(t *testing.T) {
 	}
 }
 
+func TestRemediationIgnoresInfoFindings(t *testing.T) {
+	// Info findings describe facts (e.g. "an A record exists"); they must
+	// never produce remediation guidance (FR-R6).
+	fs := []finding.Finding{
+		{Kind: "dns-a", Severity: finding.SeverityInfo},
+		{Kind: "dns-aaaa", Severity: finding.SeverityInfo},
+	}
+	if lines := remediationLines(fs); len(lines) != 0 {
+		t.Errorf("INFO findings must not produce remediation lines: %v", lines)
+	}
+}
+
 func TestRemediationDeduplicated(t *testing.T) {
 	fs := []finding.Finding{
 		{Kind: "tls-expiry", Severity: finding.SeverityCritical},

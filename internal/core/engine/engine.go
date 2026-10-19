@@ -23,14 +23,27 @@ type Result struct {
 	StartTime time.Time
 }
 
-// Run performs all checks for a target and returns a combined result.
+// Run performs all checks for a target (DNS and TLS) and returns a combined
+// result. TLS findings are appended after the DNS findings; errors from the
+// TLS path take precedence when both paths fail.
 func Run(ctx Context, t target.Target) Result {
 	start := time.Now()
+
 	r := dnscheck.Run(ctx.DNSContext, t)
+	f := r.Findings
+
+	tlsFindings, tlsErr := tlscheck.Run(ctx.TLSContext, t)
+	f = append(f, tlsFindings...)
+
+	err := r.Error
+	if tlsErr != nil {
+		err = tlsErr
+	}
+
 	return Result{
 		Target:    t,
-		Findings:  r.Findings,
-		Error:     r.Error,
+		Findings:  f,
+		Error:     err,
 		StartTime: start,
 	}
 }

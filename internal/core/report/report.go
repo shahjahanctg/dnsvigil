@@ -134,11 +134,16 @@ func countBySeverity(fs []finding.Finding) map[finding.Severity]int {
 }
 
 // remediationLines derives short, plain-language remediation guidance from
-// the finding kinds present (FR-R6, Tier 2-grade per-kind guidance lands later).
+// actionable findings only (Medium and above; FR-R6). Info-level findings are
+// descriptive facts (e.g. "an A record exists") and must not suggest fixes.
+// Tier 2-grade per-kind guidance lands later.
 func remediationLines(fs []finding.Finding) []string {
 	seen := make(map[string]bool)
 	var out []string
 	for _, f := range fs {
+		if f.Severity < finding.SeverityMedium {
+			continue
+		}
 		var guidance string
 		switch f.Kind {
 		case "tls-expiry":

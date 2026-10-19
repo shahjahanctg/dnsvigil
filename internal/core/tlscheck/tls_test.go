@@ -3,6 +3,7 @@ package tlscheck
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -117,6 +118,86 @@ func TestIsUnreachableWithNetTimeoutError(t *testing.T) {
 	var ne net.Error = e
 	if !isUnreachable(ne) {
 		t.Error("net.Error timeout should be unreachable")
+	}
+}
+
+func TestProtocolCipherFindings(t *testing.T) {
+	// FR-C7: negotiated protocol/cipher is reported; TLS 1.0 host is flagged.
+	weak := protocolCipherFindings(tls.ConnectionState{Version: tls.VersionTLS10, CipherSuite: tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA})
+	foundWeakProto, foundWeakCipher, base := false, false, false
+	for _, f := range weak {
+		switch f.Kind {
+		case "tls-protocol":
+			base = true
+			if !strings.Contains(f.What, "TLS 1.0") || !strings.Contains(f.What, "3DES_EDE") {
+				t.Errorf("tls-protocol What = %q", f.What)
+			}
+		case "tls-protocol-weak":
+			foundWeakProto = true
+			if f.Severity != finding.SeverityHigh {
+				t.Errorf("outdated protocol severity = %v, want High", f.Severity)
+			}
+		case "tls-cipher-weak":
+			foundWeakCipher = true
+			if f.Severity != finding.SeverityHigh {
+				t.Errorf("weak cipher severity = %v, want High", f.Severity)
+			}
+		}
+	}
+	if !base || !foundWeakProto || !foundWeakCipher {
+		t.Errorf("TLS 1.0 + 3DES must produce base/weak-protocol/weak-cipher findings: %+v", weak)
+	}
+
+	strong := protocolCipherFindings(tls.ConnectionState{Version: tls.VersionTLS13, CipherSuite: tls.TLS_AES_128_GCM_SHA256})
+	if len(strong) != 1 || strong[0].Kind != "tls-protocol" {
+		t.Errorf("TLS 1.3 + AES-GCM must produce exactly one base finding: %+v", strong)
+	}
+}
+
+func TestServedChainFinding(t *testing.T) {
+	// FR-C3: the served chain is enumerated like openssl s_client shows it.
+	leaf := mustCert(t, "example.com", time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	f := servedChainFinding([]*x509.Certificate{leaf})
+	if f.What != "chain_depth=1" {
+		t.Errorf("served chain What = %q", f.What)
+	}
+	if !strings.Contains(f.Detail, "subject=example.com") || !strings.Contains(f.Detail, "depth=0") {
+		t.Errorf("served chain Detail should list each cert: %q", f.Detail)
+	}
+}
+
+func TestWarnDaysOverride(t *testing.T) {
+	// FR-C4: the operator override is respected, zero means default.
+	if got := (Context{}).WarnDays(); got != DefaultExpiryWarnDays {
+		t.Errorf("default WarnDays = %d, want %d", got, DefaultExpiryWarnDays)
+	}
+	if got := (Context{ExpiryWarnDays: 10}).WarnDays(); got != 10 {
+		t.Errorf("override WarnDays = %d, want 10", got)
+	}
+
+	soon := mustCert(t, "example.com", time.Now().Add(-time.Hour), time.Now().Add(20*24*time.Hour)).NotAfter
+	remaining := daysRemaining(soon)
+	f := expiryFinding(&x509.Certificate{NotAfter: soon}, remaining, 10)
+	if f.Kind == "tls-expiry" && f.Severity == finding.SeverityHigh {
+		t.Errorf("20 days left must not be HIGH at a 10-day threshold: %+v", f)
+	}
+	f30 := expiryFinding(&x509.Certificate{NotAfter: soon}, remaining, 30)
+	if f30.Kind != "tls-expiry" || f30.Severity != finding.SeverityHigh {
+		t.Errorf("20 days left must be HIGH at the 30-day threshold: %+v", f30)
+	}
+}
+
+func TestTrustErrorFindingsNonTrustError(t *testing.T) {
+	// Non TLS trust errors must not be mapped to certificate findings;
+	// the real mappings (expired, unknown authority, hostname) are proven
+	// end to end against live in-process TLS servers in the engine tests.
+	for _, err := range []error{
+		errors.New("connect: unexpected reply"),
+		&net.AddrError{Err: "bad address", Addr: "x"},
+	} {
+		if fs, ok := trustErrorFindings(err); ok {
+			t.Errorf("non-trust error %v incorrectly mapped to findings: %+v", err, fs)
+		}
 	}
 }
 

@@ -137,6 +137,42 @@ func TestRotateRemovesOldEntries(t *testing.T) {
 	}
 }
 
+func TestAppendFailurePathProducesValidJSONL(t *testing.T) {
+	// FR-A1/A3: the failure path (e.g. a target that failed to parse before
+	// any checks ran) must still be logged as valid JSONL with the standard
+	// fields, no result, and no findings array.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	log := New(path, time.Minute, false)
+
+	when := time.Date(2026, time.October, 12, 9, 30, 0, 0, time.UTC)
+	if err := log.Append(Entry{
+		Operator: "cli",
+		Action:   "parse-error",
+		Target:   "not a target",
+		When:     when,
+	}); err != nil {
+		t.Fatalf("Append parse-error entry: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, `"op":"cli"`) ||
+		!strings.Contains(line, `"act":"parse-error"`) ||
+		!strings.Contains(line, `"tgt":"not a target"`) {
+		t.Errorf("failure-path JSONL line missing expected fields: %s", line)
+	}
+	if strings.Contains(line, `"findings"`) {
+		t.Errorf("failure-path entry must not carry findings: %s", line)
+	}
+	if strings.Count(string(data), "\n") != 1 || !strings.HasSuffix(string(data), "\n") {
+		t.Errorf("file must contain exactly one complete JSONL line: %q", string(data))
+	}
+}
+
 func TestRotateDisabledKeepsEverything(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.jsonl")

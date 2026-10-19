@@ -57,16 +57,55 @@ clean; multi-arch build OK; live CLI run for `example.com` and
 
 ## Next step (what I'd do next if asked)
 
-1. Wire `report.WriteText` into `runHeadless` (replaces ad-hoc
-   `printReport`) — that completes the M1-ish CLI: findings → structured
-   text report. Then compare against `openssl s_client`.
-2. TLS **server** fixtures need a trust seam: `dialTLS` hard-codes the
-   system pool; add optional `Context.RootCAs *x509.CertPool` so
-   in-process servers with self-signed test CAs can be exercised
-   end-to-end (expiry/self-signed/weak paths).
-3. `engine.Run` currently ignores `TLSContext` entirely — tunnel
-   `tlscheck.Run` into the flow and test both paths.
-4. `cmd/nettools` tests for `runHeadless` arg routing.
+1. M6 Tier-2 items only after a separate approval decision: OCSP/CRL,
+   CT presence, fingerprint stability, change detection, protocol/
+   cipher enumeration, extra report formats, run history.
+2. M5 acceptance run: external `testdata/` fixture set + operator
+   manual checklist (keyboard-only, colour-independent).
+3. M3 operator checkpoint before investing further in the web UI.
+
+### Session 2026-10-18 (part 2, record now)
+
+- **Trust-failure findings (FR-C6):** `tls.CertificateVerificationError`
+  wraps x509 errors as VALUE types — `errors.As(err, x509.UnknownAuthorityError{})`
+  (value target, not pointer). Expired → tls-expiry Critical;
+  unknown CA → tls-chain Critical; hostname error → Critical.
+- **miekg/dns FQDN rule:** RR domain values must end with a dot or
+  `WriteMsg` silently fails to pack (fixture MX/NS/SOA were silently
+  broken until today's tests exercised them).
+- **CLI routing:** main scans for the first mode flag and hands the rest
+  to that mode's flagset; headless flags come after `--headless`.
+- **Live evidence:** `--expiry-warn 400` → HIGH at 68 days left with
+  warn_days=400 in detail; chain_depth=4 on example.com; protocol
+  TLS 1.3 + AES-GCM reported; openssl s_client comparison matched
+  subject/issuer/dates/serial; web UI verified by curl (home form,
+  comment-only → 'no targets provided', bad port → parse error text);
+  audit entries carry operator + findings when --log-findings.
+- **TUI/web tests stay offline:** no live network in tests; model and
+  httptest only.
+
+### Session 2026-10-18 (record now)
+
+- **Bugs found by the new engine tests and fixed (root causes, tests
+  strengthened not weakened):**
+  - `tlscheck.dialTLS`: `tls.DialWithDialer(&dial, t.Addr(), t.Host, …)`
+    — network/addr arguments swapped; TLS checks never dialed correctly.
+    Fixed to `"tcp"`.
+  - `engine.Run`: ignored `TLSContext`; now runs `tlscheck.Run`, merges
+    findings after the DNS ones, TLS error wins when both fail.
+  - `report.remediationLines`: emitted guidance for INFO findings
+    ("add A record" for an existing record). Now Medium and above only.
+- **report.WriteText was already wired** into `runHeadless`; the only
+  CLI change was deleting dead `printReport`/`severityIdx`.
+- **New test files:** `internal/core/engine/engine_test.go` (in-process
+  UDP DNS fixture + real TLS server fixture; cert builder covers
+  127.0.0.1 via IP SAN so x509 IP-literal verification passes; expired
+  and unknown-CA paths assert trust-error wording,
+  unreachable → `tls-connect` Medium), `internal/core/audit/audit_test.go`
+  failure-path test, `cmd/nettools/main_test.go` (arg routing).
+- **Live verification:** `--headless example.com` → 7 findings DNS+TLS,
+  exit 0; `--headless example.com:99999` → stderr error + JSONL
+  `"act":"parse-error"` line in `audit.jsonl`.
 
 ### Session 2 additions (record now)
 

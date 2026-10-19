@@ -85,15 +85,31 @@ The run continues past the parse error and records a JSONL audit entry for the f
 ### Use a targets file
 
 ```bash
-./nettools --targets hosts.txt --operator "red-team"
+./nettools --headless --targets hosts.txt --operator "red-team"
 ```
 
 `hosts.txt` can contain one host:port per line, with `#` comments ignored.
 
+### Query a specific resolver, or compare two
+
+```bash
+./nettools --headless --resolver 1.1.1.1:53 --second-resolver 8.8.8.8:53 example.com
+```
+
+Every DNS query goes to `--resolver`; setting `--second-resolver` adds a divergence finding (MEDIUM) when the two disagree.
+
+### Enumerate protocols and ciphers, and check revocation
+
+```bash
+./nettools --headless --enumerate --check-revocation example.com
+```
+
+`--enumerate` makes more connections per target (one per protocol version and cipher suite) and flags weak ciphers HIGH; `--check-revocation` queries the certificate's OCSP responder.
+
 ### Set custom expiry warning
 
 ```bash
-./nettools --headless example.com --expiry-warn 68
+./nettools --headless --expiry-warn 68 example.com
 ```
 
 Warns if the certificate has more than 68 days remaining.
@@ -101,10 +117,20 @@ Warns if the certificate has more than 68 days remaining.
 ### Run with audit log and retention
 
 ```bash
-./nettools --headless example.com --log-findings --retention 720h
+./nettools --headless --log-findings --retention 720h example.com
 ```
 
 Finds are recorded to `audit.jsonl`; entries older than 720 hours are removed on `--rotate`.
+
+### Export the run (JSON, CSV, Markdown, HTML)
+
+```bash
+./nettools --headless --export json --report-dir .nettools/reports example.com
+```
+
+Prints the written path on stderr (for example `exported: .nettools/reports/nettools-20261019-070210.json`).
+
+> Headless flags come **before** the target list. Flags written after a target are still parsed (the tool reorders them), but flags-first is the documented form.
 
 ## Real Feature Names (renamed from FR-*)
 
@@ -150,7 +176,6 @@ Finds are recorded to `audit.jsonl`; entries older than 720 hours are removed on
 | M3 | Web UI — `go:embed` assets, loopback-only server, renders identical findings; verified live via curl plus httptest suite |
 
 ## What's in the Tree
-
 | Path | Purpose |
 |------|---------|
 | `cmd/nettools/main.go` | Entry point routing: `--headless \| --tui \| --gui` |
@@ -180,7 +205,8 @@ Live reference comparison passed against `openssl s_client` on example.com (subj
 ## Known State
 
 - **Milestone status:** Tier 1 Complete (M1 accepted via openssl reference comparison); M2 (TUI) and M3 (web UI) built with tests
-- **Tier 2 items:** OCSP/CRL, CT, fingerprint caching, protocol enumeration, extra export formats — intentionally not started; need separate decision
+- **Tier 2 implemented behind explicit flags or extra connections per target:** OCSP stapling always reported; revocation (`--check-revocation`), CT presence, fingerprint recording, protocol/cipher enumeration (`--enumerate`), and JSON/CSV/Markdown/HTML export (`--export`) are available and tested
+- **Tier 2 still not started:** CRL fetching, DV/OV/EV classification, chain-completeness and SNI enumeration, DNSSEC validation, subdomain discovery — need separate decision
 - `docs/` and `testdata/`: empty; `bin/`: removed
 
 ## License

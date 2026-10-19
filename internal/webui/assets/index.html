@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{.Title}}</title>
+<style>
+  body { font-family: monospace, sans-serif; margin: 2rem; color: #111; background: #fff; }
+  h1 { font-size: 1.2rem; }
+  textarea, button { font-family: inherit; font-size: 1rem; }
+  table { border-collapse: collapse; margin-top: 1rem; width: 100%; }
+  td, th { border: 1px solid #666; padding: 0.35rem 0.6rem; text-align: left; vertical-align: top; }
+  .sev { font-weight: bold; }
+  .detail { white-space: pre-wrap; color: #333; }
+</style>
+</head>
+<body>
+<h1>nettools — local web interface</h1>
+<p>Enter operator-supplied targets, one per line. Blank lines and <code>#</code> comments are ignored.</p>
+<form action="/run" method="POST">
+  <textarea name="targets" rows="6" cols="60">{{.Targets}}</textarea><br><br>
+  <button type="submit">Run audit</button>
+</form>
+
+{{if .Error}}<p>error: {{.Error}}</p>{{end}}
+
+{{if .Findings}}
+<h2>Findings ({{len .Findings}}, most severe first)</h2>
+<table>
+  <tr><th>Severity</th><th>Finding</th><th>Why (plain language)</th><th>Detail</th></tr>
+  {{range .Findings}}
+  <tr>
+    <td class="sev">{{.Severity.Name}}</td>
+    <td>{{.What}}</td>
+    <td>{{.Because}}</td>
+    <td class="detail">{{.Detail}}</td>
+  </tr>
+  {{end}}
+</table>
+{{end}}
+{{if .History}}
+<h2>Recent runs (history)</h2>
+<table>
+  <tr><th>When</th><th>Target</th><th>Certificate fingerprint</th></tr>
+  {{range .History}}
+  <tr><td>{{.When.Format "2006-01-02 15:04:05"}}</td><td>{{.Target}}</td><td>{{.Fingerprint}}</td></tr>
+  {{end}}
+</table>
+{{end}}
+</body>
+</html>
