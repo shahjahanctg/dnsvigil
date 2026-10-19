@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/soc-tool/internal/core/finding"
+	"github.com/soc-tool/internal/core/target"
 )
 
 // mustCert builds a self-signed certificate for tests.
@@ -94,6 +95,57 @@ func TestDaysRemaining(t *testing.T) {
 type strErr string
 
 func (e strErr) Error() string { return string(e) }
+
+func TestDialTLSTimesOutOnSilentServer(t *testing.T) {
+	// NFR-3 regression: a host that accepts the TCP connection and then never
+	// speaks TLS used to hang the whole run, because the handshake had no
+	// deadline. It must instead come back as an unreachable result.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn // accept and stay silent
+		}
+	}()
+
+	tgt, err := target.ParseTarget(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("parse target: %v", err)
+	}
+
+	start := time.Now()
+	conn, err := dialTLS(Context{Timeout: 500 * time.Millisecond}, tgt)
+	elapsed := time.Since(start)
+	if conn != nil {
+		conn.Close()
+		t.Fatal("a silent server must not yield a connection")
+	}
+	if err == nil {
+		t.Fatal("a silent server must produce an error")
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("dial honoured %s instead of the 500ms budget", elapsed)
+	}
+	if !isUnreachable(err) {
+		t.Errorf("a timed-out handshake should read as unreachable, got %v", err)
+	}
+}
+
+func TestDialTimeoutDefaultAndOverride(t *testing.T) {
+	if got := (Context{}).DialTimeout(); got != DefaultDialTimeout {
+		t.Errorf("default dial timeout = %s, want %s", got, DefaultDialTimeout)
+	}
+	if got := (Context{Timeout: time.Second}).DialTimeout(); got != time.Second {
+		t.Errorf("operator dial timeout = %s, want 1s", got)
+	}
+}
 
 func TestIsUnreachable(t *testing.T) {
 	// Transport failures are unreachable; TLS trust errors are not (they are

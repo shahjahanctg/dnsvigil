@@ -194,7 +194,7 @@ func runHeadless(args []string) {
 	opts := headlessOptions{}
 	files := fs.String("targets", "", "file of newline-separated targets to import (FR-C1)")
 	fs.StringVar(&opts.Operator, "operator", "cli", "operator name recorded in report and audit (FR-R5)")
-	fs.DurationVar(&opts.Timeout, "timeout", 5*time.Second, "lookup/DNS timeout")
+	fs.DurationVar(&opts.Timeout, "timeout", 5*time.Second, "per-query DNS timeout and per-attempt TLS connect/handshake bound")
 	fs.IntVar(&opts.ExpiryWarnDays, "expiry-warn", tlscheck.DefaultExpiryWarnDays, "days-to-expiry warning threshold (FR-C4)")
 	fs.StringVar(&opts.AuditPath, "audit", "audit.jsonl", "audit log path")
 	fs.DurationVar(&opts.Retention, "retention", 0, "audit retention (keep entries newer than this; 0 disables) (FR-A5)")
@@ -260,6 +260,7 @@ func runHeadless(args []string) {
 				ExpiryWarnDays:  opts.ExpiryWarnDays,
 				CheckRevocation: opts.CheckRevocation,
 				Enumerate:       opts.Enumerate,
+				Timeout:         opts.Timeout,
 			},
 		}
 

@@ -3,6 +3,7 @@
 package tlscheck
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -20,6 +21,10 @@ import (
 // not override it per run.
 const DefaultExpiryWarnDays = 30
 
+// DefaultDialTimeout bounds one handshake attempt (NFR-3): a host that accepts
+// nothing must become a recorded result, not a hang.
+const DefaultDialTimeout = 5 * time.Second
+
 // Context carries the things certificate checks need that aren't on the stream itself.
 type Context struct {
 	Logger         func(...any)
@@ -32,6 +37,9 @@ type Context struct {
 	// ExpiryWarnDays overrides the days-to-expiry warning threshold
 	// (FR-C4). Zero means the default.
 	ExpiryWarnDays int
+	// Timeout bounds the TCP connect and the TLS handshake. Zero means
+	// DefaultDialTimeout; it is the operator's --timeout.
+	Timeout time.Duration
 	// CheckRevocation enables OCSP revocation verification (FR-C10, off by
 	// default per spec). Without it, stapling presence is still reported.
 	CheckRevocation bool
@@ -456,12 +464,33 @@ func dialTLS(ctx Context, t target.Target) (*tls.Conn, error) {
 	if ctx.RootCAs != nil {
 		config.RootCAs = ctx.RootCAs
 	}
-	var dial net.Dialer
-	conn, err := tls.DialWithDialer(&dial, "tcp", t.Addr(), config)
+	budget := ctx.DialTimeout()
+	// Both halves need bounding: the dialer's Timeout covers the TCP connect,
+	// and the context deadline covers the handshake, which otherwise waits
+	// forever on a host that accepts the connection and then goes quiet.
+	dialer := &net.Dialer{Timeout: budget}
+	connCtx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+
+	d := &tls.Dialer{NetDialer: dialer, Config: config}
+	conn, err := d.DialContext(connCtx, "tcp", t.Addr())
 	if err != nil {
 		return nil, err
 	}
-	return conn, nil
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		conn.Close()
+		return nil, fmt.Errorf("unexpected connection type %T", conn)
+	}
+	return tlsConn, nil
+}
+
+// DialTimeout resolves the per-attempt bound (NFR-3).
+func (c Context) DialTimeout() time.Duration {
+	if c.Timeout > 0 {
+		return c.Timeout
+	}
+	return DefaultDialTimeout
 }
 
 func daysRemaining(notAfter time.Time) int {
@@ -477,9 +506,16 @@ func isUnreachable(err error) bool {
 	if ok && ne.Timeout() {
 		return true
 	}
-	if strings.Contains(err.Error(), "connection refused") ||
-		strings.Contains(err.Error(), "no such host") ||
-		strings.Contains(err.Error(), "i/o timeout") {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "operation was canceled") ||
+		strings.Contains(msg, "network is unreachable") {
 		return true
 	}
 	return false
